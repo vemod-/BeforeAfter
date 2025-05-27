@@ -37,6 +37,7 @@ public:
     QGraphicsViewX(QWidget *parent = 0)
     {
         Q_UNUSED(parent);
+        //setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
         setTransformationAnchor(AnchorUnderMouse);
         resetTransform();
         setDragMode(ScrollHandDrag);
@@ -192,6 +193,9 @@ private:
     QString valueString(QString key) {
         return value(key).toString();
     }
+    QPointF valuePointF(QString key) {
+        return value(key).toPointF();
+    }
     void setValue(QString key, QVariant value) {
         m_ProjectList[m_CurrentIndex].insert(key, value);
     }
@@ -202,26 +206,31 @@ private:
     bool compute2Enabled();
     bool compute3Enabled();
     void enableComputeButtons();
-    void drawPoint(QPointF p, QPainter& pt) {
-        pt.drawPoint(p);
-        pt.drawEllipse(p,5,5);
+    void drawPoint(QPointF p, int i, QPainter& pt) {
+        if (p != QPointF()) {
+            pt.drawPoint(p);
+            pt.drawEllipse(p,5,5);
+            pt.drawText(p + QPointF(8,-8),QString::number(i));
+        }
     }
     const QPixmap pixmapWithBeforeAnchors(QPixmap& pix) {
         QPixmap p(pix);
         QPainter pt(&p);
+        //pt.setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
         pt.setPen(Qt::yellow);
-        drawPoint(anchorBefore1,pt);
-        drawPoint(anchorBefore2,pt);
-        drawPoint(anchorBefore3,pt);
+        drawPoint(anchorBefore1,1,pt);
+        drawPoint(anchorBefore2,2,pt);
+        drawPoint(anchorBefore3,3,pt);
         return p;
     }
     const QPixmap pixmapWithAfterAnchors(QPixmap& pix) {
         QPixmap p(pix);
         QPainter pt(&p);
+        //pt.setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
         pt.setPen(Qt::green);
-        drawPoint(anchorAfter1,pt);
-        drawPoint(anchorAfter2,pt);
-        drawPoint(anchorAfter3,pt);
+        drawPoint(anchorAfter1,1,pt);
+        drawPoint(anchorAfter2,2,pt);
+        drawPoint(anchorAfter3,3,pt);
         return p;
     }
     QTransform computeAlignTransform(QPointF after1, QPointF after2, QPointF before1, QPointF before2)
@@ -297,9 +306,9 @@ private:
         qDebug() << "Mapped after1:" << t.map(a1) << "Expected:" << b1;
         qDebug() << "Mapped after2:" << t.map(a2) << "Expected:" << b2;
         qDebug() << "Mapped after3:" << t.map(a3) << "Expected:" << b3;
-
         return t;
     }
+    void saveTransform(QTransform& t);
 private slots:
     void loadBefore();
     void loadAfter();

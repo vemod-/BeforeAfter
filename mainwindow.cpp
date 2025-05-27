@@ -107,6 +107,13 @@ void MainWindow::updateValues()
         setValue("Rotate", ui->RotateSpinBox->value());
         setValue("XRotate", ui->XRotateSpinBox->value());
         setValue("YRotate", ui->YRotateSpinBox->value());
+
+        setValue("AnchorBefore1",anchorBefore1);
+        setValue("AnchorBefore2",anchorBefore2);
+        setValue("AnchorBefore3",anchorBefore3);
+        setValue("AnchorAfter1",anchorAfter1);
+        setValue("AnchorAfter2",anchorAfter2);
+        setValue("AnchorAfter3",anchorAfter3);
     }
 }
 
@@ -114,7 +121,7 @@ void MainWindow::updateFrame()
 {
     updateValues();
     Scene.clear();
-    Scene.setSceneRect(beforePix.rect());
+    //Scene.setSceneRect(beforePix.rect());
     ui->MainView->origSize = beforePix.size();
     QGraphicsScene* s = &Scene; //new QGraphicsScene(beforePix.rect());
     QGraphicsPixmapItem* i = drawBefore(s,pixmapWithBeforeAnchors(beforePix));
@@ -144,16 +151,12 @@ QGraphicsPixmapItem* MainWindow::drawAfter(QGraphicsScene* s, QPixmap p)
 {
     QGraphicsPixmapItem* i = s->addPixmap(p);
     QTransform t;
-    // 4. Nu gör vi den slutliga translationen
     t.translate(valueDouble("HTranslate"), valueDouble("VTranslate"));
-
-    // 2. Rotationer och skalning sker kring mitten
     t.rotate(valueDouble("XRotate"), Qt::XAxis);
     t.rotate(valueDouble("YRotate"), Qt::YAxis);
     t.rotate(valueDouble("Rotate"), Qt::ZAxis);
     t.shear(valueDouble("HShear"), valueDouble("VShear"));
     t.scale(valueDouble("HScale"), valueDouble("VScale"));
-
     i->setTransform(t);
     s->setSceneRect(beforePix.rect().united(i->sceneBoundingRect().toRect()));
     return i;
@@ -184,6 +187,7 @@ void MainWindow::saveAfter()
 {
     QPixmap pix(beforePix.size());
     QPainter painter(&pix);
+    //painter.setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
     QGraphicsScene s = QGraphicsScene(beforePix.rect());
     drawBefore(&s,beforePix);
     drawAfter(&s,afterPix);
@@ -231,13 +235,31 @@ void MainWindow::loadProject(QString name)
     ui->XRotateSpinBox->setValueSilent(valueDouble("XRotate"));
     ui->YRotateSpinBox->setValueSilent(valueDouble("YRotate"));
 
+    clearAnchors();
+
+    anchorBefore1 = valuePointF("AnchorBefore1");
+    anchorBefore2 = valuePointF("AnchorBefore2");
+    anchorBefore3 = valuePointF("AnchorBefore3");
+    anchorAfter1 = valuePointF("AnchorAfter1");
+    anchorAfter2 = valuePointF("AnchorAfter2");
+    anchorAfter3 = valuePointF("AnchorAfter3");
+    if (anchorBefore1 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorBefore1Button,Qt::yellow);
+    if (anchorBefore2 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorBefore2Button,Qt::yellow);
+    if (anchorBefore3 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorBefore3Button,Qt::yellow);
+    if (anchorAfter1 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorAfter1Button,Qt::green);
+    if (anchorAfter2 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorAfter2Button,Qt::green);
+    if (anchorAfter3 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorAfter3Button,Qt::green);
+
+    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
+    ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
+
     updateLabel();
     updateFrame();
     updateProjects();
     ui->ProjectCombo->blockSignals(true);
     ui->ProjectCombo->setCurrentText(valueString("ProjectName"));
     ui->ProjectCombo->blockSignals(false);
-    clearAnchors();
+    //clearAnchors();
 }
 
 void MainWindow::updateProjects()
@@ -319,6 +341,50 @@ void MainWindow::enableComputeButtons() {
     ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
 }
 
+void MainWindow::saveTransform(QTransform &t) {
+    // Translation
+    ui->HTranslateSpinBox->setValueSilent(t.dx());
+    ui->VTranslateSpinBox->setValueSilent(t.dy());
+    // 1. Extrahera skala
+    const double scaleX = std::hypot(t.m11(), t.m12());
+    const double scaleY = std::hypot(t.m21(), t.m22());
+
+    ui->HScaleSpinBox->setValueSilent(scaleX);
+    ui->VScaleSpinBox->setValueSilent(scaleY);
+
+    // 2. Extrahera rotation (radians)
+    const double rotationRad = std::atan2(t.m12(), t.m11());
+    const double rotationDeg = rotationRad * 180.0 / M_PI;
+    ui->RotateSpinBox->setValueSilent(rotationDeg);
+
+    // 3. Ta bort rotationen från matrisen
+    QTransform rotationOnly;
+    rotationOnly.rotate(rotationDeg);
+    const QTransform withoutRotation = rotationOnly.inverted() * t;
+    // 4. Extrahera shear från den roterade transformen
+    // Nu bör m21 (dvs shearX) vara ren
+    const double shearX = (withoutRotation.m11() * withoutRotation.m21() + withoutRotation.m12() * withoutRotation.m22()) / (scaleX * scaleX);
+    ui->HShearSpinBox->setValueSilent(shearX);
+
+    // 5. VShear används sällan – kan sättas till 0
+    ui->VShearSpinBox->setValueSilent(0);
+
+    QTransform test;
+    test.translate(t.dx(),t.dy());
+    test.rotate(rotationDeg, Qt::ZAxis);
+    test.shear(shearX,0);
+    test.scale(scaleX, scaleY);
+    QTransform v;
+    v.translate(ui->HTranslateSpinBox->value(), ui->VTranslateSpinBox->value());
+    v.rotate(ui->RotateSpinBox->value(), Qt::ZAxis);
+    v.shear(ui->HShearSpinBox->value(), ui->VShearSpinBox->value());
+    v.scale(ui->HScaleSpinBox->value(), ui->VScaleSpinBox->value());
+    qDebug() << t;
+    qDebug() << test;
+    qDebug() << v;
+
+}
+
 void MainWindow::removeProject(QString name)
 {
     foreach(QMap p, m_ProjectList) {
@@ -369,13 +435,14 @@ void MainWindow::setAnchorBefore2() {
 
 void MainWindow::setAnchorBefore3() {
     anchorBefore3 = ui->MainView->loopForPoint(ui->AnchorBefore3Button, Qt::yellow);
-    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
+    ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
     updateFrame();
 }
 
 void MainWindow::setAnchorAfter1() {
     anchorAfter1 = ui->MainView->loopForPoint(ui->AnchorAfter1Button, Qt::green);
     ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
+    updateFrame();
 }
 
 void MainWindow::setAnchorAfter2() {
@@ -386,7 +453,7 @@ void MainWindow::setAnchorAfter2() {
 
 void MainWindow::setAnchorAfter3() {
     anchorAfter3 = ui->MainView->loopForPoint(ui->AnchorAfter3Button, Qt::green);
-    ui->Compute3AnchorsButton->setEnabled(compute2Enabled());
+    ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
     updateFrame();
 }
 
@@ -400,7 +467,7 @@ void MainWindow::clearValues() {
     ui->RotateSpinBox->setValueSilent(0);
     ui->XRotateSpinBox->setValueSilent(0);
     ui->YRotateSpinBox->setValueSilent(0);
-    clearAnchors();
+    //clearAnchors();
     updateFrame();
 }
 
@@ -421,7 +488,6 @@ void MainWindow::clearAnchors() {
 
 void MainWindow::computeAnchors() {
     QTransform t = computeAlignTransform(anchorAfter1,anchorAfter2,anchorBefore1,anchorBefore2);
-    //QTransform t = computeAffineFromThreePoints(anchorAfter1,anchorAfter2,anchorAfter3,anchorBefore1,anchorBefore2,anchorBefore3);
 /*
     Scene.clear();
     Scene.setSceneRect(beforePix.rect());
@@ -432,7 +498,7 @@ void MainWindow::computeAnchors() {
     i1->setTransform(t);
     i1->setOpacity(0.5);
     return;
-*/
+
     // Translation (enkelt)
     ui->HTranslateSpinBox->setValueSilent(t.dx());
     ui->VTranslateSpinBox->setValueSilent(t.dy());
@@ -455,6 +521,8 @@ void MainWindow::computeAnchors() {
     // Vertikal skjuvning är inte trivial att extrahera om shearX ≠ 0
     // För enkelhet: sätt till 0 (om du inte använder VShear)
     ui->VShearSpinBox->setValueSilent(0);
+*/
+    saveTransform(t);
     updateFrame();
 }
 
@@ -464,29 +532,7 @@ void MainWindow::computeAnchorsFromThree()
         anchorAfter1, anchorAfter2, anchorAfter3,
         anchorBefore1, anchorBefore2, anchorBefore3
         );
-
-    // Translation
-    ui->HTranslateSpinBox->setValueSilent(t.dx());
-    ui->VTranslateSpinBox->setValueSilent(t.dy());
-
-    // Skala (längd på kolumnvektorer)
-    double scaleX = std::hypot(t.m11(), t.m12()); // längd på första kolumnen
-    double scaleY = std::hypot(t.m21(), t.m22()); // längd på andra kolumnen
-
-    ui->HScaleSpinBox->setValueSilent(scaleX);
-    ui->VScaleSpinBox->setValueSilent(scaleY);
-
-    // Rotation (vinkel för första kolumnen)
-    double rotationDeg = std::atan2(t.m12(), t.m11()) * 180.0 / M_PI;
-    ui->RotateSpinBox->setValueSilent(rotationDeg);
-
-    // Skjuvning
-    double shearX = (t.m11() * t.m21() + t.m12() * t.m22()) / (scaleX * scaleX);
-    ui->HShearSpinBox->setValueSilent(shearX);
-
-    // Vertikal skjuvning: valfritt om du använder VShear
-    ui->VShearSpinBox->setValueSilent(0);
-
+    saveTransform(t);
     updateFrame();
 }
 
