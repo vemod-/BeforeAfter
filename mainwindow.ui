@@ -537,6 +537,13 @@
                 </property>
                </widget>
               </item>
+              <item>
+               <widget class="QPushButton" name="AnchorAfter4Button">
+                <property name="text">
+                 <string>After 4</string>
+                </property>
+               </widget>
+              </item>
              </layout>
             </item>
             <item row="0" column="0">
@@ -577,6 +584,13 @@
                 </property>
                </widget>
               </item>
+              <item>
+               <widget class="QPushButton" name="AnchorBefore4Button">
+                <property name="text">
+                 <string>Before 4</string>
+                </property>
+               </widget>
+              </item>
              </layout>
             </item>
             <item row="1" column="0" colspan="2">
@@ -614,6 +628,13 @@
                <widget class="QPushButton" name="Compute3AnchorsButton">
                 <property name="text">
                  <string>3pt</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="Compute4AnchorsButton">
+                <property name="text">
+                 <string>4pt</string>
                 </property>
                </widget>
               </item>

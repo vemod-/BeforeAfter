@@ -18,6 +18,36 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
+#define anchorCount 3
+
+enum ViewMode {
+    EditView,
+    SplitView,
+    HSplitView
+};
+
+class HighQualityImageItem : public QGraphicsItem
+{
+public:
+    HighQualityImageItem(const QImage& image = QImage(), QGraphicsItem* parent = nullptr);
+
+    void setImage(const QImage& image);
+    void setTransformMatrix(const QTransform& transform);
+
+    QRectF boundingRect() const override;
+    void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget = nullptr) override;
+
+    void setViewMode(ViewMode mode);
+    void setSplitFactor(qreal factor);
+    QImage image;
+    QPainterPath extra;
+    QPen extraPen;
+private:
+    QTransform m_transform;
+    ViewMode m_viewMode = ViewMode::SplitView;
+    qreal m_splitFactor = 1.0;
+};
+
 class QDoubleSpinBoxX : public QDoubleSpinBox
 {
     Q_OBJECT
@@ -37,13 +67,13 @@ public:
     QGraphicsViewX(QWidget *parent = 0)
     {
         Q_UNUSED(parent);
-        //setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
         setTransformationAnchor(AnchorUnderMouse);
         resetTransform();
         setDragMode(ScrollHandDrag);
         grabGesture(Qt::PinchGesture);
     }
-    QPointF loopForPoint(QPushButton* b, QColor c) {
+    void loopForPoint(QPushButton* b, QPointF& p, QColor c) {
+        loopPoint = p;
         looping = true;
         setButtonColor(b, Qt::red);
         QApplication::setOverrideCursor(Qt::PointingHandCursor);
@@ -52,9 +82,13 @@ public:
             QApplication::processEvents();
         }
         QApplication::restoreOverrideCursor();
-        setButtonColor(b, Qt::transparent);
-        if (loopPoint != QPointF(0,0)) setButtonColor(b, c);
-        return loopPoint;
+        if (loopPoint != QPointF(0,0)) {
+            setButtonColor(b, c);
+            p = loopPoint;
+        }
+        else {
+            setButtonColor(b,Qt::transparent);
+        }
     }
     void setButtonColor(QPushButton* b, QColor c) {
         b->setAutoFillBackground(true);
@@ -72,6 +106,12 @@ protected:
             return gestureEvent(static_cast<QGestureEvent*>(event));
         return QGraphicsView::event(event);
     }
+    void keyPressEvent(QKeyEvent* /*event*/) {
+        looping = false;
+    }
+    void closeEvent(QCloseEvent* /*event*/) {
+        looping = false;
+    }
     void mousePressEvent(QMouseEvent* event) {
         m_MouseDown = true;
         loopPoint = mapToScene(event->position().toPoint());
@@ -86,7 +126,6 @@ protected:
             if (p.y() < 0) p.setY(0);
             if (p.x() > 1) p.setX(1);
             if (p.y() > 1) p.setY(0);
-            //qDebug() << p;
             emit fingerMoved(p);
         }
     }
@@ -105,34 +144,49 @@ private:
     }
     void pinchTriggered(QPinchGesture* event)
     {
-        // 1. Hämta gesture center point i view-koordinater
+        // 1. Hämta gesture center i view- och scenkoordinater
         QPointF gestureCenterInView = event->centerPoint();
         QPointF gestureCenterInScene = mapToScene(gestureCenterInView.toPoint());
 
-        // 2. Uppdatera senaste skalningsfaktor alltid
+        // 2. Hämta aktuell skalningsfaktor från gesten
         currentStepScaleFactor = event->totalScaleFactor();
 
+        // 3. Om gesten är klar – applicera sista skalningen innan vi nollställer
         if (event->state() == Qt::GestureFinished) {
             scaleFactor *= currentStepScaleFactor;
+            scaleFactor = std::clamp(scaleFactor, 0.2, 5.0);
             currentStepScaleFactor = 1.0;
+
+            // Sätt ny transform
+            QTransform t;
+            t.scale(scaleFactor, scaleFactor);
+            setTransform(t);
+
+            // Justera scroll så gesture center stannar visuellt kvar
+            QPointF newGestureCenterInView = mapFromScene(gestureCenterInScene);
+            QPointF delta = gestureCenterInView - newGestureCenterInView;
+            horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+            verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+
+            return; // Vi är klara här
         }
 
-        // 3. Beräkna total skala
+        // 4. Pågående gest: räkna ut temporär skala
         qreal sxy = scaleFactor * currentStepScaleFactor;
         sxy = std::clamp(sxy, 0.2, 5.0);
 
-        // Om vi nått gräns – lås skalan och återställ step
+        // Om vi nått gräns – lås skalan och återställ steg
         if (sxy == 0.2 || sxy == 5.0) {
             scaleFactor = sxy;
             currentStepScaleFactor = 1.0;
         }
 
-        // 4. Zooma med transform
+        // 5. Sätt transform för pågående skalning
         QTransform t;
         t.scale(sxy, sxy);
         setTransform(t);
 
-        // 5. Justera position så att gesture center hålls kvar
+        // 6. Justera scroll så pinch center stannar kvar
         QPointF newGestureCenterInView = mapFromScene(gestureCenterInScene);
         QPointF delta = gestureCenterInView - newGestureCenterInView;
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
@@ -150,27 +204,19 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-    enum ViewMode {
-        EditView,
-        SplitView,
-        HSplitView
-    };
-
 private:
     Ui::MainWindow *ui;
     QGraphicsScene Scene;
     int m_CurrentIndex = -1;
     QList<QMap<QString,QVariant>> m_ProjectList;
-    QGraphicsPixmapItem* drawBefore(QGraphicsScene*,QPixmap);
-    QGraphicsPixmapItem* drawAfter(QGraphicsScene*,QPixmap);
-    QPixmap beforePix;
-    QPixmap afterPix;
-    QPointF anchorBefore1;
-    QPointF anchorBefore2;
-    QPointF anchorBefore3;
-    QPointF anchorAfter1;
-    QPointF anchorAfter2;
-    QPointF anchorAfter3;
+    void drawBefore(QGraphicsScene*, HighQualityImageItem&);
+    void drawAfter(QGraphicsScene*, HighQualityImageItem&);
+    HighQualityImageItem beforeImage;
+    HighQualityImageItem afterImage;
+    std::array<QPointF,4> anchorBefore;
+    std::array<QPointF,4> anchorAfter;
+    std::array<QPushButton*,4> beforeButtons;
+    std::array<QPushButton*,4> afterButtons;
     void updateValues();
     void updateProjects();
     void addProject();
@@ -203,65 +249,60 @@ private:
         for (int i = 0; i < m_ProjectList.size(); i++) if (m_ProjectList[i].value(key)==value) return true;
         return false;
     }
-    bool compute2Enabled();
-    bool compute3Enabled();
+    bool computeEnabled(int count);
     void enableComputeButtons();
-    void drawPoint(QPointF p, int i, QPainter& pt) {
-        if (p != QPointF()) {
-            pt.drawPoint(p);
-            pt.drawEllipse(p,5,5);
-            pt.drawText(p + QPointF(8,-8),QString::number(i));
-        }
+    void computeMax();
+    QPainterPath anchorPoint(QPointF p, int i) {
+        QPainterPath g;
+        g.addEllipse(p.x(),p.y(),1,1);
+        g.addEllipse(p.x()-2,p.y()-2,5,5);
+        g.addText(p + QPointF(8,-8),QFont("Helvetica",8),QString::number(i));
+        return g;
     }
-    const QPixmap pixmapWithBeforeAnchors(QPixmap& pix) {
-        QPixmap p(pix);
-        QPainter pt(&p);
-        //pt.setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
-        pt.setPen(Qt::yellow);
-        drawPoint(anchorBefore1,1,pt);
-        drawPoint(anchorBefore2,2,pt);
-        drawPoint(anchorBefore3,3,pt);
-        return p;
+    QPainterPath beforeAnchors() {
+        QPainterPath g;
+        for (int i = 0; i < 4; i++) g.addPath(anchorPoint(anchorBefore[i],i + 1));
+        return g;
     }
-    const QPixmap pixmapWithAfterAnchors(QPixmap& pix) {
-        QPixmap p(pix);
-        QPainter pt(&p);
-        //pt.setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
-        pt.setPen(Qt::green);
-        drawPoint(anchorAfter1,1,pt);
-        drawPoint(anchorAfter2,2,pt);
-        drawPoint(anchorAfter3,3,pt);
-        return p;
+    QPainterPath afterAnchors() {
+        QPainterPath g;
+        for (int i = 0; i < 4; i++) g.addPath(anchorPoint(anchorAfter[i],i + 1));
+        return g;
     }
-    QTransform computeAlignTransform(QPointF after1, QPointF after2, QPointF before1, QPointF before2)
+    QTransform computeAlignTransform(std::array<QPointF,4> after,std::array<QPointF,4> before)
     {
         // Steg 1: Vektorer
-        QPointF vAfter = after2 - after1;
-        QPointF vBefore = before2 - before1;
+        QPointF vAfter = after[1] - after[0];
+        QPointF vBefore = before[1] - before[0];
 
         // Steg 2: Längder och skala
-        double lenAfter = std::hypot(vAfter.x(), vAfter.y());
-        double lenBefore = std::hypot(vBefore.x(), vBefore.y());
-        double scale = lenBefore / lenAfter;
+        const double lenAfter = qHypot(vAfter.x(), vAfter.y());
+        const double lenBefore = qHypot(vBefore.x(), vBefore.y());
+        const double scale = lenBefore / lenAfter;
 
         // Steg 3: Rotation i grader
-        double angleAfter = std::atan2(vAfter.y(), vAfter.x());
-        double angleBefore = std::atan2(vBefore.y(), vBefore.x());
-        double rotation = (angleBefore - angleAfter) * 180.0 / M_PI;
+        const double angleAfter = qAtan2(vAfter.y(), vAfter.x());
+        const double angleBefore = qAtan2(vBefore.y(), vBefore.x());
+        const double rotationRad = angleBefore - angleAfter;
 
         QTransform t;
-        t.translate(before1.x(), before1.y());        // 3. flytta till slutposition
-        t.rotate(rotation);                           // 2. rotera
+        t.translate(before[0].x(), before[0].y());        // 3. flytta till slutposition
+        t.rotateRadians(rotationRad);                           // 2. rotera
         t.scale(scale, scale);                        // 2. skala
-        t.translate(-after1.x(), -after1.y());        // 1. flytta från startpunkt
+        t.translate(-after[0].x(), -after[0].y());        // 1. flytta från startpunkt
 
-        qDebug() << "Mapped after1:" << t.map(after1) << "Expected:" << before1;
-        qDebug() << "Mapped after2:" << t.map(after2) << "Expected:" << before2;
+        for (int i = 0; i < 2; i++) qDebug() << "Mapped after " << i + 1 << t.map(after[i]) << "Expected:" << before[i];
         return t;
     }
-    QTransform computeAffineFromThreePoints(QPointF a1, QPointF a2, QPointF a3,
-                                            QPointF b1, QPointF b2, QPointF b3)
+    QTransform computeAffineFromThreePoints(std::array<QPointF,4> after,std::array<QPointF,4> before)
     {
+        /*
+        QPolygonF srcPoly = {a1, a2, a3};
+        QPolygonF dstPoly = {b1, b2, b3};
+        QTransform q;
+        bool ok = QTransform::quadToQuad(srcPoly, dstPoly, q);
+        return q;
+*/
         // Vi vill hitta en affinn transform T så att:
         //   T * a1 = b1
         //   T * a2 = b2
@@ -276,16 +317,16 @@ private:
         //   [ 0  0 0 x3 y3 1 ]   [dy ]
 
         // Extrahera koordinater
-        double x1 = a1.x(), y1 = a1.y();
-        double x2 = a2.x(), y2 = a2.y();
-        double x3 = a3.x(), y3 = a3.y();
+        const double x1 = after[0].x(), y1 = after[0].y();
+        const double x2 = after[1].x(), y2 = after[1].y();
+        const double x3 = after[2].x(), y3 = after[2].y();
 
-        double u1 = b1.x(), v1 = b1.y();
-        double u2 = b2.x(), v2 = b2.y();
-        double u3 = b3.x(), v3 = b3.y();
+        const double u1 = before[0].x(), v1 = before[0].y();
+        const double u2 = before[1].x(), v2 = before[1].y();
+        const double u3 = before[2].x(), v3 = before[2].y();
 
         // Lös med Cramers regel eller Gauss-elimination – här direkt formelbaserat
-        double denom = x1*(y2 - y3) - y1*(x2 - x3) + (x2*y3 - x3*y2);
+        const double denom = x1*(y2 - y3) - y1*(x2 - x3) + (x2*y3 - x3*y2);
 
         if (std::abs(denom) < 1e-8) {
             qWarning("Points are colinear; cannot compute affine transform.");
@@ -293,21 +334,34 @@ private:
         }
 
         // Lös koefficienterna
-        double a = ((u1*(y2 - y3) - u2*(y1 - y3) + u3*(y1 - y2)) / denom);
-        double b = ((u1*(x3 - x2) + u2*(x1 - x3) + u3*(x2 - x1)) / denom);
-        double c = ((u1*(x2*y3 - x3*y2) - u2*(x1*y3 - x3*y1) + u3*(x1*y2 - x2*y1)) / denom);
+        const double a = ((u1*(y2 - y3) - u2*(y1 - y3) + u3*(y1 - y2)) / denom);
+        const double b = ((u1*(x3 - x2) + u2*(x1 - x3) + u3*(x2 - x1)) / denom);
+        const double c = ((u1*(x2*y3 - x3*y2) - u2*(x1*y3 - x3*y1) + u3*(x1*y2 - x2*y1)) / denom);
 
-        double d = ((v1*(y2 - y3) - v2*(y1 - y3) + v3*(y1 - y2)) / denom);
-        double e = ((v1*(x3 - x2) + v2*(x1 - x3) + v3*(x2 - x1)) / denom);
-        double f = ((v1*(x2*y3 - x3*y2) - v2*(x1*y3 - x3*y1) + v3*(x1*y2 - x2*y1)) / denom);
+        const double d = ((v1*(y2 - y3) - v2*(y1 - y3) + v3*(y1 - y2)) / denom);
+        const double e = ((v1*(x3 - x2) + v2*(x1 - x3) + v3*(x2 - x1)) / denom);
+        const double f = ((v1*(x2*y3 - x3*y2) - v2*(x1*y3 - x3*y1) + v3*(x1*y2 - x2*y1)) / denom);
 
         QTransform t(a, d, b, e, c, f); // m11 m12 m21 m22 dx dy
 
-        qDebug() << "Mapped after1:" << t.map(a1) << "Expected:" << b1;
-        qDebug() << "Mapped after2:" << t.map(a2) << "Expected:" << b2;
-        qDebug() << "Mapped after3:" << t.map(a3) << "Expected:" << b3;
+        for (int i = 0; i < 3; i++) qDebug() << "Mapped after " << i + 1 << t.map(after[i]) << "Expected:" << before[i];
         return t;
     }
+    QTransform computeAffineFromFourPoints(std::array<QPointF,4> after,std::array<QPointF,4> before)
+    {
+        QList<QPointF> a;
+        QList<QPointF> b;
+        for (int i = 0; i < 4; i++) {
+            a.append(after[i]);
+            b.append(before[i]);
+        }
+        QPolygonF srcPoly(a);
+        QPolygonF dstPoly(b);
+        QTransform q;
+        QTransform::quadToQuad(srcPoly, dstPoly, q);
+        return q;
+    }
+
     void saveTransform(QTransform& t);
 private slots:
     void loadBefore();
@@ -316,16 +370,13 @@ private slots:
     void toggleView();
     void updateLabel();
     void finger(QPointF);
-    void setAnchorBefore1();
-    void setAnchorBefore2();
-    void setAnchorBefore3();
-    void setAnchorAfter1();
-    void setAnchorAfter2();
-    void setAnchorAfter3();
-    void clearValues();
+    void setAnchorBefore(int index);
+    void setAnchorAfter(int index);
+    //void clearValues();
     void clearAnchors();
-    void computeAnchors();
+    void computeAnchorsFromTwo();
     void computeAnchorsFromThree();
+    void computeAnchorsFromFour();
 public slots:
     void updateFrame();
     void showEvent(QShowEvent*);

@@ -8,6 +8,74 @@
 #include <QCloseEvent>
 #include <qmath.h>
 
+HighQualityImageItem::HighQualityImageItem(const QImage& image, QGraphicsItem* parent)
+    : QGraphicsItem(parent), image(image), m_transform()
+{
+    setFlag(QGraphicsItem::ItemIgnoresTransformations, false);
+}
+
+void HighQualityImageItem::setImage(const QImage& i)
+{
+    prepareGeometryChange();
+    image = i;
+    update();
+}
+
+void HighQualityImageItem::setTransformMatrix(const QTransform& transform)
+{
+    prepareGeometryChange();
+    m_transform = transform;
+    update();
+}
+
+QRectF HighQualityImageItem::boundingRect() const
+{
+    return m_transform.mapRect(QRectF(QPointF(0, 0), image.size()));
+}
+
+void HighQualityImageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setTransform(m_transform, true);
+
+    QRectF imageRect(0, 0, image.width(), image.height());
+
+    if (m_viewMode == ViewMode::EditView) {
+        painter->setOpacity(m_splitFactor);
+        painter->drawImage(QPointF(0, 0), image);
+    } else if (m_viewMode == ViewMode::SplitView) {
+        QRectF splitRect = imageRect;
+        splitRect.setRight(splitRect.left() + imageRect.width() * m_splitFactor);
+        painter->setClipRect(splitRect);
+        painter->drawImage(QPointF(0, 0), image);
+    } else if (m_viewMode == ViewMode::HSplitView) {
+        QRectF splitRect = imageRect;
+        splitRect.setBottom(splitRect.top() + imageRect.height() * m_splitFactor);
+        painter->setClipRect(splitRect);
+        painter->drawImage(QPointF(0, 0), image);
+    } else {
+        painter->drawImage(QPointF(0, 0), image);
+    }
+
+    painter->setPen(extraPen);
+    painter->drawPath(extra);
+    painter->restore();
+}
+
+void HighQualityImageItem::setViewMode(ViewMode mode)
+{
+    m_viewMode = mode;
+    update();
+}
+
+void HighQualityImageItem::setSplitFactor(qreal factor)
+{
+    m_splitFactor = std::clamp(factor, 0.0, 1.0);
+    update();
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -31,15 +99,28 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->VScaleSpinBox,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,&MainWindow::updateFrame);
     connect(ui->TransparancySpinBox,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,&MainWindow::updateFrame);
     connect(ui->MainView,&QGraphicsViewX::fingerMoved,this,&MainWindow::finger);
-    connect(ui->AnchorBefore1Button,&QPushButton::clicked,this,&MainWindow::setAnchorBefore1);
-    connect(ui->AnchorBefore2Button,&QPushButton::clicked,this,&MainWindow::setAnchorBefore2);
-    connect(ui->AnchorBefore3Button,&QPushButton::clicked,this,&MainWindow::setAnchorBefore3);
-    connect(ui->AnchorAfter1Button,&QPushButton::clicked,this,&MainWindow::setAnchorAfter1);
-    connect(ui->AnchorAfter2Button,&QPushButton::clicked,this,&MainWindow::setAnchorAfter2);
-    connect(ui->AnchorAfter3Button,&QPushButton::clicked,this,&MainWindow::setAnchorAfter3);
-    connect(ui->Compute2AnchorsButton,&QPushButton::clicked,this,&MainWindow::computeAnchors);
+    for (int i = 0; i < 4; ++i) {
+        beforeButtons[i] = findChild<QPushButton*>(QString("AnchorBefore%1Button").arg(i + 1));
+        afterButtons[i]  = findChild<QPushButton*>(QString("AnchorAfter%1Button").arg(i + 1));
+
+        if (i < anchorCount) {
+            connect(beforeButtons[i], &QPushButton::clicked, this, [this, i]() {
+                setAnchorBefore(i);
+            });
+            connect(afterButtons[i], &QPushButton::clicked, this, [this, i]() {
+                setAnchorAfter(i);
+            });
+        }
+        else {
+            beforeButtons[i]->setVisible(false);
+            afterButtons[i]->setVisible(false);
+        }
+    }
+    connect(ui->Compute2AnchorsButton,&QPushButton::clicked,this,&MainWindow::computeAnchorsFromTwo);
     connect(ui->Compute3AnchorsButton,&QPushButton::clicked,this,&MainWindow::computeAnchorsFromThree);
-    connect(ui->ClearButton,&QPushButton::clicked,this,&MainWindow::clearValues);
+    connect(ui->Compute4AnchorsButton,&QPushButton::clicked,this,&MainWindow::computeAnchorsFromFour);
+    ui->Compute4AnchorsButton->setVisible(false);
+    connect(ui->ClearButton,&QPushButton::clicked,this,&MainWindow::clearAnchors);
     ui->Compute3AnchorsButton->setEnabled(false);
 }
 
@@ -108,58 +189,44 @@ void MainWindow::updateValues()
         setValue("XRotate", ui->XRotateSpinBox->value());
         setValue("YRotate", ui->YRotateSpinBox->value());
 
-        setValue("AnchorBefore1",anchorBefore1);
-        setValue("AnchorBefore2",anchorBefore2);
-        setValue("AnchorBefore3",anchorBefore3);
-        setValue("AnchorAfter1",anchorAfter1);
-        setValue("AnchorAfter2",anchorAfter2);
-        setValue("AnchorAfter3",anchorAfter3);
+        for (int i = 0; i < anchorCount; ++i) {
+            setValue(QString("AnchorBefore%1").arg(i + 1), anchorBefore[i]);
+            setValue(QString("AnchorAfter%1").arg(i + 1), anchorAfter[i]);
+        }
     }
 }
 
 void MainWindow::updateFrame()
 {
     updateValues();
-    Scene.clear();
-    //Scene.setSceneRect(beforePix.rect());
-    ui->MainView->origSize = beforePix.size();
-    QGraphicsScene* s = &Scene; //new QGraphicsScene(beforePix.rect());
-    QGraphicsPixmapItem* i = drawBefore(s,pixmapWithBeforeAnchors(beforePix));
-    QGraphicsPixmapItem* i1 = drawAfter(s,pixmapWithAfterAnchors(afterPix));
-    if (valueInt("ViewMode") == EditView)
-    {
-        i1->setOpacity(1.0 - valueDouble("Transparancy"));
-    }
-    else
-    {
-        i->setZValue(1);
-        QRect r = i->pixmap().rect();
-        if (valueInt("ViewMode") == SplitView)
-            r.setRight(r.right() * valueDouble("Transparancy"));
-        else if (valueInt("ViewMode") == HSplitView)
-            r.setBottom(r.bottom() * valueDouble("Transparancy"));
-        i->setPixmap(i->pixmap().copy(r));
-    }
+    for (QGraphicsItem* i : (const QList<QGraphicsItem*>)Scene.items()) Scene.removeItem(i);
+    ui->MainView->origSize = beforeImage.image.size();
+    QGraphicsScene* s = &Scene;
+    afterImage.extra = afterAnchors();
+    afterImage.extraPen = Qt::green;
+    drawAfter(s,afterImage);
+    beforeImage.extra = beforeAnchors();
+    beforeImage.extraPen = Qt::yellow;
+    drawBefore(s,beforeImage);
+    beforeImage.setViewMode((ViewMode)valueInt("ViewMode"));
+    beforeImage.setSplitFactor(valueDouble("Transparancy"));
 }
 
-QGraphicsPixmapItem* MainWindow::drawBefore(QGraphicsScene* s, QPixmap p)
-{
-    return s->addPixmap(p);
+void MainWindow::drawBefore(QGraphicsScene* s, HighQualityImageItem& i) {
+    s->addItem(&i);
 }
 
-QGraphicsPixmapItem* MainWindow::drawAfter(QGraphicsScene* s, QPixmap p)
-{
-    QGraphicsPixmapItem* i = s->addPixmap(p);
+void MainWindow::drawAfter(QGraphicsScene* s, HighQualityImageItem& i) {
+    s->addItem(&i);
     QTransform t;
     t.translate(valueDouble("HTranslate"), valueDouble("VTranslate"));
+    t.shear(valueDouble("HShear"), valueDouble("VShear"));
+    t.scale(valueDouble("HScale"), valueDouble("VScale"));
     t.rotate(valueDouble("XRotate"), Qt::XAxis);
     t.rotate(valueDouble("YRotate"), Qt::YAxis);
     t.rotate(valueDouble("Rotate"), Qt::ZAxis);
-    t.shear(valueDouble("HShear"), valueDouble("VShear"));
-    t.scale(valueDouble("HScale"), valueDouble("VScale"));
-    i->setTransform(t);
-    s->setSceneRect(beforePix.rect().united(i->sceneBoundingRect().toRect()));
-    return i;
+    i.setTransform(t);
+    s->setSceneRect(beforeImage.image.rect().united(i.mapRectToScene(i.boundingRect()).toRect()));
 }
 
 void MainWindow::loadBefore()
@@ -167,7 +234,7 @@ void MainWindow::loadBefore()
     QString p = QFileDialog::getOpenFileName(this, tr("Open Image"), "", tr("Image Files (*.jpg *.jpeg)"));
     if (!p.isEmpty())
     {
-        beforePix.load(p);
+        beforeImage.image.load(p);
         setValue("BeforePix",p);
     }
 }
@@ -177,7 +244,7 @@ void MainWindow::loadAfter()
     QString p = QFileDialog::getOpenFileName(this, tr("Open Image"), "", tr("Image Files (*.jpg *.jpeg)"));
     if (!p.isEmpty())
     {
-        afterPix.load(p);
+        afterImage.image.load(p);
         setValue("AfterPix",p);
     }
     updateFrame();
@@ -185,18 +252,18 @@ void MainWindow::loadAfter()
 
 void MainWindow::saveAfter()
 {
-    QPixmap pix(beforePix.size());
-    QPainter painter(&pix);
-    //painter.setRenderHints(QPainter::Antialiasing | QPainter::LosslessImageRendering | QPainter::SmoothPixmapTransform);
-    QGraphicsScene s = QGraphicsScene(beforePix.rect());
-    drawBefore(&s,beforePix);
-    drawAfter(&s,afterPix);
-    s.render(&painter,pix.rect(),pix.rect());
-    QString path = QFileDialog::getSaveFileName(this, tr("Save Image"), "", tr("Image Files (*.jpg *.jpeg)"));
-    if (!path.isEmpty())
-    {
-        pix.copy(beforePix.rect()).save(path);
-    }
+    QImage outImage( beforeImage.image.size(), QImage::Format_RGB32);
+    outImage.fill(Qt::white);
+    QPainter painter(&outImage);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    QGraphicsScene s(beforeImage.image.rect());
+    afterImage.extra.clear();
+    drawAfter(&s, afterImage);
+    s.render(&painter, outImage.rect(), outImage.rect());
+    QString path = QFileDialog::getSaveFileName(this, tr("Save Image"), "", tr("Image Files (*.jpg *.jpeg *.png)"));
+    if (!path.isEmpty()) outImage.save(path);
+    for (QGraphicsItem* i : (const QList<QGraphicsItem*>)s.items()) s.removeItem(i);
 }
 
 void MainWindow::toggleView()
@@ -211,18 +278,17 @@ void MainWindow::toggleView()
 
 void MainWindow::updateLabel()
 {
-    if (valueInt("ViewMode") == EditView)
-        ui->TransparancyLabel->setText("Transparancy");
-    else
-        ui->TransparancyLabel->setText("Split");
-
+    QString s = "Transparancy";
+    if (valueInt("ViewMode") == ViewMode::SplitView) s = "Vertical Split";
+    if (valueInt("ViewMode") == ViewMode::HSplitView) s = "Horizontal Split";
+    ui->TransparancyLabel->setText(s);
 }
 
 void MainWindow::loadProject(QString name)
 {
     if (!name.isEmpty()) m_CurrentIndex = indexFromName(name);
-    beforePix.load(valueString("BeforePix"));
-    afterPix.load(valueString("AfterPix"));
+    beforeImage.image.load(valueString("BeforePix"));
+    afterImage.image.load(valueString("AfterPix"));
 
     ui->HTranslateSpinBox->setValueSilent(valueDouble("HTranslate"));
     ui->VTranslateSpinBox->setValueSilent(valueDouble("VTranslate"));
@@ -235,23 +301,16 @@ void MainWindow::loadProject(QString name)
     ui->XRotateSpinBox->setValueSilent(valueDouble("XRotate"));
     ui->YRotateSpinBox->setValueSilent(valueDouble("YRotate"));
 
-    clearAnchors();
+    for (int i = 0; i < anchorCount; ++i) {
+        anchorBefore[i] = valuePointF(QString("AnchorBefore%1").arg(i + 1));
+        anchorAfter[i] = valuePointF(QString("AnchorAfter%1").arg(i + 1));
 
-    anchorBefore1 = valuePointF("AnchorBefore1");
-    anchorBefore2 = valuePointF("AnchorBefore2");
-    anchorBefore3 = valuePointF("AnchorBefore3");
-    anchorAfter1 = valuePointF("AnchorAfter1");
-    anchorAfter2 = valuePointF("AnchorAfter2");
-    anchorAfter3 = valuePointF("AnchorAfter3");
-    if (anchorBefore1 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorBefore1Button,Qt::yellow);
-    if (anchorBefore2 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorBefore2Button,Qt::yellow);
-    if (anchorBefore3 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorBefore3Button,Qt::yellow);
-    if (anchorAfter1 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorAfter1Button,Qt::green);
-    if (anchorAfter2 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorAfter2Button,Qt::green);
-    if (anchorAfter3 != QPointF(0,0)) ui->MainView->setButtonColor(ui->AnchorAfter3Button,Qt::green);
-
-    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
-    ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
+        if (!anchorBefore[i].isNull())
+            ui->MainView->setButtonColor(beforeButtons[i], Qt::yellow);
+        if (!anchorAfter[i].isNull())
+            ui->MainView->setButtonColor(afterButtons[i], Qt::green);
+    }
+    enableComputeButtons();
 
     updateLabel();
     updateFrame();
@@ -259,7 +318,6 @@ void MainWindow::loadProject(QString name)
     ui->ProjectCombo->blockSignals(true);
     ui->ProjectCombo->setCurrentText(valueString("ProjectName"));
     ui->ProjectCombo->blockSignals(false);
-    //clearAnchors();
 }
 
 void MainWindow::updateProjects()
@@ -300,7 +358,8 @@ void MainWindow::addProject()
         setValue("Transparancy",0.5);
         setValue("HScale",1);
         setValue("VScale",1);
-        beforePix.load(p);
+        //beforePix.load(p);
+        beforeImage.image.load(p);
         setValue("BeforePix",p);
         loadProject();
         loadAfter();
@@ -312,77 +371,66 @@ void MainWindow::removeCurrentProject()
     removeProject(ui->ProjectCombo->currentText());
 }
 
-bool MainWindow::compute2Enabled() {
-    if (anchorBefore1 != QPointF(0,0)) {
-        if (anchorBefore2 != QPointF(0,0)) {
-            if (anchorAfter1 != QPointF(0,0)) {
-                if (anchorAfter2 != QPointF(0,0)) {
-                    return true;
-                }
-            }
-        }
+bool MainWindow::computeEnabled(int count) {
+    for (int i = 0; i < count; i++) {
+        if (anchorBefore[i] == QPointF(0,0)) return false;
+        if (anchorAfter[i] == QPointF(0,0)) return false;
     }
-    return false;
-}
-
-bool MainWindow::compute3Enabled() {
-    if (anchorBefore3 != QPointF(0,0)) {
-        if (anchorAfter3 != QPointF(0,0)) {
-            if (compute2Enabled()) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return true;
 }
 
 void MainWindow::enableComputeButtons() {
-    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
-    ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
+    ui->Compute2AnchorsButton->setEnabled(computeEnabled(2));
+    ui->Compute3AnchorsButton->setEnabled(computeEnabled(3));
+}
+
+void MainWindow::computeMax() {
+    //if (computeEnabled(4)) {
+    //    computeAnchorsFromFour();
+    //}
+    if (computeEnabled(3)) {
+        computeAnchorsFromThree();
+    }
+    else if (computeEnabled(2)) {
+        computeAnchorsFromTwo();
+    }
 }
 
 void MainWindow::saveTransform(QTransform &t) {
-    // Translation
     ui->HTranslateSpinBox->setValueSilent(t.dx());
     ui->VTranslateSpinBox->setValueSilent(t.dy());
-    // 1. Extrahera skala
-    const double scaleX = std::hypot(t.m11(), t.m12());
-    const double scaleY = std::hypot(t.m21(), t.m22());
 
+    const double rotationRad = qAtan2(t.m12(), t.m11());
+    const double rotationDeg = qRadiansToDegrees(rotationRad);
+    ui->RotateSpinBox->setValueSilent(rotationDeg);
+    QTransform pure = QTransform(t).rotateRadians(-rotationRad);
+
+    const double scaleX = pure.m11();
+    const double scaleY = pure.m22();
     ui->HScaleSpinBox->setValueSilent(scaleX);
     ui->VScaleSpinBox->setValueSilent(scaleY);
+    pure = QTransform(pure).scale(1.0/scaleX,1.0/scaleY);
 
-    // 2. Extrahera rotation (radians)
-    const double rotationRad = std::atan2(t.m12(), t.m11());
-    const double rotationDeg = rotationRad * 180.0 / M_PI;
-    ui->RotateSpinBox->setValueSilent(rotationDeg);
-
-    // 3. Ta bort rotationen från matrisen
-    QTransform rotationOnly;
-    rotationOnly.rotate(rotationDeg);
-    const QTransform withoutRotation = rotationOnly.inverted() * t;
-    // 4. Extrahera shear från den roterade transformen
-    // Nu bör m21 (dvs shearX) vara ren
-    const double shearX = (withoutRotation.m11() * withoutRotation.m21() + withoutRotation.m12() * withoutRotation.m22()) / (scaleX * scaleX);
+    const double shearX = pure.m21();
+    const double shearY = pure.m12();
     ui->HShearSpinBox->setValueSilent(shearX);
-
-    // 5. VShear används sällan – kan sättas till 0
-    ui->VShearSpinBox->setValueSilent(0);
+    ui->VShearSpinBox->setValueSilent(shearY);
+    pure = QTransform(pure).shear(-shearX,-shearY);
 
     QTransform test;
     test.translate(t.dx(),t.dy());
-    test.rotate(rotationDeg, Qt::ZAxis);
-    test.shear(shearX,0);
+    test.shear(shearX,shearY);
     test.scale(scaleX, scaleY);
+    test.rotate(rotationDeg, Qt::ZAxis);
     QTransform v;
     v.translate(ui->HTranslateSpinBox->value(), ui->VTranslateSpinBox->value());
-    v.rotate(ui->RotateSpinBox->value(), Qt::ZAxis);
     v.shear(ui->HShearSpinBox->value(), ui->VShearSpinBox->value());
     v.scale(ui->HScaleSpinBox->value(), ui->VScaleSpinBox->value());
+    v.rotate(ui->RotateSpinBox->value(), Qt::ZAxis);
     qDebug() << t;
     qDebug() << test;
     qDebug() << v;
-
+    qDebug() << pure;
 }
 
 void MainWindow::removeProject(QString name)
@@ -421,42 +469,34 @@ void MainWindow::finger(QPointF p) {
     }
 }
 
-void MainWindow::setAnchorBefore1() {
-    anchorBefore1 = ui->MainView->loopForPoint(ui->AnchorBefore1Button, Qt::yellow);
-    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
+void MainWindow::setAnchorBefore(int index) {
+    for (QGraphicsItem* i : (const QList<QGraphicsItem*>)Scene.items()) Scene.removeItem(i);
+    ui->MainView->origSize = beforeImage.image.size();
+    QGraphicsScene* s = &Scene;
+    beforeImage.extra = beforeAnchors();
+    beforeImage.extraPen = Qt::yellow;
+    beforeImage.setSplitFactor(1);
+    s->addItem(&beforeImage);
+    ui->MainView->loopForPoint(beforeButtons[index], anchorBefore[index], Qt::yellow);
+    enableComputeButtons();
+    computeMax();
     updateFrame();
 }
 
-void MainWindow::setAnchorBefore2() {
-    anchorBefore2 = ui->MainView->loopForPoint(ui->AnchorBefore2Button, Qt::yellow);
-    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
+void MainWindow::setAnchorAfter(int index) {
+    for (QGraphicsItem* i : (const QList<QGraphicsItem*>)Scene.items()) Scene.removeItem(i);
+    ui->MainView->origSize = beforeImage.image.size();
+    QGraphicsScene* s = &Scene;
+    afterImage.extra = afterAnchors();
+    afterImage.extraPen = Qt::green;
+    afterImage.setTransform(QTransform());
+    s->addItem(&afterImage);
+    ui->MainView->loopForPoint(afterButtons[index], anchorAfter[index], Qt::green);
+    enableComputeButtons();
+    computeMax();
     updateFrame();
 }
-
-void MainWindow::setAnchorBefore3() {
-    anchorBefore3 = ui->MainView->loopForPoint(ui->AnchorBefore3Button, Qt::yellow);
-    ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
-    updateFrame();
-}
-
-void MainWindow::setAnchorAfter1() {
-    anchorAfter1 = ui->MainView->loopForPoint(ui->AnchorAfter1Button, Qt::green);
-    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
-    updateFrame();
-}
-
-void MainWindow::setAnchorAfter2() {
-    anchorAfter2 = ui->MainView->loopForPoint(ui->AnchorAfter2Button, Qt::green);
-    ui->Compute2AnchorsButton->setEnabled(compute2Enabled());
-    updateFrame();
-}
-
-void MainWindow::setAnchorAfter3() {
-    anchorAfter3 = ui->MainView->loopForPoint(ui->AnchorAfter3Button, Qt::green);
-    ui->Compute3AnchorsButton->setEnabled(compute3Enabled());
-    updateFrame();
-}
-
+/*
 void MainWindow::clearValues() {
     ui->HTranslateSpinBox->setValueSilent(0);
     ui->VTranslateSpinBox->setValueSilent(0);
@@ -467,71 +507,43 @@ void MainWindow::clearValues() {
     ui->RotateSpinBox->setValueSilent(0);
     ui->XRotateSpinBox->setValueSilent(0);
     ui->YRotateSpinBox->setValueSilent(0);
-    //clearAnchors();
+    updateFrame();
+}
+*/
+void MainWindow::clearAnchors() {
+    for (int i = 0; i < anchorCount; i++) {
+        anchorBefore[i] = QPointF(0,0);
+        anchorAfter[i] = QPointF(0,0);
+        ui->MainView->setButtonColor(beforeButtons[i],Qt::transparent);
+        ui->MainView->setButtonColor(afterButtons[i],Qt::transparent);
+    }
+    ui->HTranslateSpinBox->setValueSilent(0);
+    ui->VTranslateSpinBox->setValueSilent(0);
+    ui->HShearSpinBox->setValueSilent(0);
+    ui->VShearSpinBox->setValueSilent(0);
+    ui->HScaleSpinBox->setValueSilent(1);
+    ui->VScaleSpinBox->setValueSilent(1);
+    ui->RotateSpinBox->setValueSilent(0);
+    ui->XRotateSpinBox->setValueSilent(0);
+    ui->YRotateSpinBox->setValueSilent(0);
     updateFrame();
 }
 
-void MainWindow::clearAnchors() {
-    anchorBefore1 = QPointF(0,0);
-    anchorBefore2 = QPointF(0,0);
-    anchorBefore3 = QPointF(0,0);
-    anchorAfter1 = QPointF(0,0);
-    anchorAfter2 = QPointF(0,0);
-    anchorAfter3 = QPointF(0,0);
-    ui->MainView->setButtonColor(ui->AnchorBefore1Button,Qt::transparent);
-    ui->MainView->setButtonColor(ui->AnchorBefore2Button,Qt::transparent);
-    ui->MainView->setButtonColor(ui->AnchorBefore3Button,Qt::transparent);
-    ui->MainView->setButtonColor(ui->AnchorAfter1Button,Qt::transparent);
-    ui->MainView->setButtonColor(ui->AnchorAfter2Button,Qt::transparent);
-    ui->MainView->setButtonColor(ui->AnchorAfter3Button,Qt::transparent);
-}
-
-void MainWindow::computeAnchors() {
-    QTransform t = computeAlignTransform(anchorAfter1,anchorAfter2,anchorBefore1,anchorBefore2);
-/*
-    Scene.clear();
-    Scene.setSceneRect(beforePix.rect());
-    QGraphicsScene* s = &Scene; //new QGraphicsScene(beforePix.rect());
-    QGraphicsPixmapItem* i = drawBefore(s);
-    QPixmap p = afterPix;
-    QGraphicsPixmapItem* i1 = s->addPixmap(p);
-    i1->setTransform(t);
-    i1->setOpacity(0.5);
-    return;
-
-    // Translation (enkelt)
-    ui->HTranslateSpinBox->setValueSilent(t.dx());
-    ui->VTranslateSpinBox->setValueSilent(t.dy());
-
-    // Skala: längd på kolumnvektorer
-    double scaleX = std::hypot(t.m11(), t.m12());
-    double scaleY = std::hypot(t.m21(), t.m22());
-    ui->HScaleSpinBox->setValueSilent(scaleX);
-    ui->VScaleSpinBox->setValueSilent(scaleY);
-
-    // Rotation: vinkel på första kolumn (X-axelns riktning)
-    double rotationDeg = std::atan2(t.m12(), t.m11()) * 180.0 / M_PI;
-    ui->RotateSpinBox->setValueSilent(rotationDeg);
-
-    // Skjuvning:
-    // shearX: hur mycket Y påverkas av X (dvs horisontell skjuvning)
-    double shearX = (t.m11() * t.m21() + t.m12() * t.m22()) / (scaleX * scaleX);
-    ui->HShearSpinBox->setValueSilent(shearX);
-
-    // Vertikal skjuvning är inte trivial att extrahera om shearX ≠ 0
-    // För enkelhet: sätt till 0 (om du inte använder VShear)
-    ui->VShearSpinBox->setValueSilent(0);
-*/
+void MainWindow::computeAnchorsFromTwo() {
+    QTransform t = computeAlignTransform(anchorAfter, anchorBefore);
     saveTransform(t);
     updateFrame();
 }
 
 void MainWindow::computeAnchorsFromThree()
 {
-    QTransform t = computeAffineFromThreePoints(
-        anchorAfter1, anchorAfter2, anchorAfter3,
-        anchorBefore1, anchorBefore2, anchorBefore3
-        );
+    QTransform t = computeAffineFromThreePoints(anchorAfter, anchorBefore);
+    saveTransform(t);
+    updateFrame();
+}
+
+void MainWindow::computeAnchorsFromFour() {
+    QTransform t = computeAffineFromFourPoints(anchorAfter, anchorBefore);
     saveTransform(t);
     updateFrame();
 }
