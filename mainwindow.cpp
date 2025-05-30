@@ -7,6 +7,7 @@
 #include <QInputDialog>
 #include <QCloseEvent>
 #include <qmath.h>
+#include "cprojectdialog.h"
 
 HighQualityImageItem::HighQualityImageItem(const QImage& image, QGraphicsItem* parent)
     : QGraphicsItem(parent), m_Image(image), m_transform()
@@ -99,7 +100,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     ui->MainView->setScene(&Scene);
     connect(ui->LoadAfterButton,&QToolButton::clicked,this,&MainWindow::loadAfter);
-    connect(ui->SaveAfterButton,&QToolButton::clicked,this,&MainWindow::saveAfter);
+    connect(ui->SaveAfterButton,&QToolButton::clicked,this,&MainWindow::saveAfterDialog);
     connect(ui->AddProjectToolButton,&QToolButton::clicked,this,&MainWindow::addProject);
     connect(ui->RemoveProjectToolButton,&QToolButton::clicked,this,&MainWindow::removeCurrentProject);
     connect(ui->ProjectCombo,&QComboBox::currentTextChanged,this,&MainWindow::loadProject);
@@ -134,7 +135,7 @@ MainWindow::MainWindow(QWidget *parent)
         if (i >= anchorCount) b->setVisible(false);
     }
     connect(ui->ClearButton,&QPushButton::clicked,this,&MainWindow::clearAnchors);
-    ui->Compute3AnchorsButton->setEnabled(false);
+    connect(ui->CreateWebSiteButton,&QPushButton::clicked,this,&MainWindow::createWebGallery);
 }
 
 void MainWindow::showEvent(QShowEvent* event)
@@ -261,7 +262,12 @@ void MainWindow::loadAfter()
     updateFrame();
 }
 
-void MainWindow::saveAfter()
+void MainWindow::saveAfterDialog() {
+    const QString path = QFileDialog::getSaveFileName(this, tr("Save Image"), "", tr("Image Files (*.jpg *.jpeg *.png)"));
+    if (!path.isEmpty()) saveAfter(path);
+}
+
+void MainWindow::saveAfter(QString path)
 {
     QImage outImage(beforeImage.originalSize(), QImage::Format_RGB32);
     outImage.fill(Qt::white);
@@ -272,7 +278,6 @@ void MainWindow::saveAfter()
     afterImage.setOverlay(QPainterPath());
     drawAfter(&s, afterImage);
     s.render(&painter, outImage.rect(), outImage.rect());
-    QString path = QFileDialog::getSaveFileName(this, tr("Save Image"), "", tr("Image Files (*.jpg *.jpeg *.png)"));
     if (!path.isEmpty()) outImage.save(path);
     for (QGraphicsItem* i : (const QList<QGraphicsItem*>)s.items()) s.removeItem(i);
 }
@@ -423,8 +428,33 @@ void MainWindow::saveTransform(QTransform &t) {
     qDebug() << pure;
 }
 
-void MainWindow::removeProject(QString name)
-{
+void MainWindow::generateFolders(const QString& baseDirPath, const QStringList& projectNames){
+    const QString currentProject = ui->ProjectCombo->currentText();
+    QDir baseDir(baseDirPath);
+    QStringList caseDirs;
+    if (baseDir.exists()) {
+        QMessageBox msgBox;
+        msgBox.setText("Directory Exists!");
+        msgBox.setInformativeText("Do you want to use this Directory?");
+        msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
+        msgBox.setDefaultButton(QMessageBox::Yes);
+        int ret = msgBox.exec();
+        if (ret == QMessageBox::Cancel) return;
+    }
+    else {
+        baseDir.mkpath(baseDirPath);
+        baseDir.setPath(baseDirPath);
+    }
+    for (const QString& pName : projectNames) {
+        loadProject(pName);
+        baseDir.mkdir(pName);
+        beforeImage.save(baseDirPath + "/" + pName + "/before.jpg");
+        saveAfter(baseDirPath + "/" + pName + "/after.jpg");
+    }
+    if (!currentProject.isEmpty()) loadProject(currentProject);
+}
+
+void MainWindow::removeProject(QString name) {
     foreach(QMap p, m_ProjectList) {
         if (p.value("ProjectName") == name)
         {
@@ -521,6 +551,184 @@ void MainWindow::computeAnchors(int index) {
     }
     saveTransform(t);
     updateFrame();
+}
+
+void MainWindow::createWebGallery() {
+    QStringList projectNames;
+    QStringList allProjects;
+    QString title = "Before/After Gallery";
+    foreach(QMap p, m_ProjectList) {
+        allProjects.append(p.value("ProjectName").toString());
+    }
+    CProjectDialog p(this);
+    p.exec(allProjects,projectNames,title);
+    if (projectNames.isEmpty()) return;
+    qDebug() << projectNames;
+    const QString path = QFileDialog::getExistingDirectory(this, tr("Base Path"), "/home", QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (path.isEmpty()) return;
+    qDebug() << path;
+    generateFolders(path,projectNames);
+    generateHtmlGallery(path,title);
+}
+
+void MainWindow::generateHtmlGallery(const QString& baseDirPath, const QString& title)
+{
+    QDir baseDir(baseDirPath);
+    QStringList caseDirs;
+
+    // Hitta undermappar med before.jpg + after.jpg
+    for (const QString& entry : (const QStringList)baseDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        QDir subdir(baseDir.filePath(entry));
+        if (subdir.exists("before.jpg") && subdir.exists("after.jpg")) {
+            caseDirs << entry;
+        }
+    }
+
+    // Skriv HTML-filen
+    QFile htmlFile(baseDir.filePath("index.html"));
+    if (!htmlFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qWarning("Kunde inte skapa index.html");
+        return;
+    }
+
+    QTextStream out(&htmlFile);
+    out << R"(<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>)";
+    out << title;
+out << R"(</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #111; color: white; }
+    .pair-container { margin: 2em auto; width: 90vw; max-width: 1200px; }
+    .label { margin-bottom: 0.5em; font-size: 1.2em; }
+
+    .img-container {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      background: #222;
+    }
+    .img-container::before {
+      content: "";
+      display: block;
+      padding-top: 56.25%; /* 16:9 ratio fallback */
+    }
+    .img-before, .img-after {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%; object-fit: contain;
+    }
+    .img-before {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      z-index: 2;
+      transition: clip-path 0.2s, opacity 0.2s;
+    }
+    .img-after {
+      z-index: 1;
+    }
+    select {
+      /* ... */
+      background-color: #000;
+      color: #fff;
+    }
+
+    select::before {
+      /* ... */
+      border-bottom: var(--size) solid #fff;
+    }
+
+    select::after {
+      /* ... */
+      border-top: var(--size) solid #fff;
+    }
+
+    input[type=range] {
+      width: 100%;
+      margin-top: 0.5em;
+    }
+  </style>
+</head>
+<body>
+<h1 style="text-align: center;">)";
+    out << title;
+    out << R"(</h1>
+<div id="gallery">
+)";
+
+    for (int i = 0; i < caseDirs.size(); ++i) {
+        const QString& folder = caseDirs[i];
+        out << QString(R"(
+  <div class="pair-container">
+    <div class="label">%1</div>
+    <div class="img-container">
+      <img src="%1/before.jpg" class="img-before" id="before-%2">
+      <img src="%1/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-%2">
+    <select id="mode-%2">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+)").arg(folder).arg(i);
+    }
+
+    out << R"(</div>
+<script>
+)";
+
+    // JS för sliders
+    out << "const count = " << caseDirs.size() << ";\n";
+    out << R"(
+for (let i = 0; i < count; i++) {
+  const slider = document.getElementById(`slider-${i}`);
+  const before = document.getElementById(`before-${i}`);
+  const after = document.getElementById(`after-${i}`);
+  const mode = document.getElementById(`mode-${i}`);
+
+  function updateView() {
+    const val = slider.value;
+    const m = mode.value;
+
+    // Reset style
+    before.style.mixBlendMode = '';
+    before.style.opacity = '';
+    before.style.clipPath = '';
+    before.style.transform = '';
+
+    if (m === 'vertical') {
+      before.style.clipPath = `inset(0 ${100 - val}% 0 0)`;
+    } else if (m === 'horizontal') {
+      before.style.clipPath = `inset(0 0 ${100 - val}% 0)`;
+    } else if (m === 'diagonal') {
+      const pct = val / 50;
+      const x = 100 - pct * 100;
+      const y = pct * 100;
+      before.style.clipPath = `polygon(0 0, ${x}% 0, 100% ${y}%, 100% 100%, 0 100%)`;
+    } else if (m === 'transparent') {
+      before.style.mixBlendMode = 'normal'; // or 'multiply', 'overlay', etc.
+      before.style.opacity = (val / 100).toString();
+    }
+  }
+
+  slider.addEventListener('input', updateView);
+  mode.addEventListener('change', updateView);
+
+  updateView(); // Init
+}
+</script>
+</body>
+</html>
+)";
+    htmlFile.close();
+    qDebug() << "HTML-sida genererad till" << htmlFile.fileName();
 }
 
 

@@ -35,6 +35,7 @@ public:
 
     void setImage(const QImage& image);
     void load(const QString& path) { m_Image.load(path); }
+    void save(const QString& path) { m_Image.save(path); }
     void setTransformMatrix(const QTransform& transform);
 
     QRectF boundingRect() const override;
@@ -453,10 +454,13 @@ private:
         return q;
     }
     void saveTransform(QTransform& t);
+    void generateFolders(const QString& baseDirPath, const QStringList& projectNames);
+    void generateHtmlGallery(const QString& baseDirPath, const QString& title);
 private slots:
     void loadBefore();
     void loadAfter();
-    void saveAfter();
+    void saveAfterDialog();
+    void saveAfter(QString path);
     void toggleView();
     void updateLabel();
     void finger(QPointF);
@@ -464,6 +468,7 @@ private slots:
     void setAnchorAfter(int index);
     void clearAnchors();
     void computeAnchors(int index);
+    void createWebGallery();
 public slots:
     void updateFrame();
     void showEvent(QShowEvent*);
