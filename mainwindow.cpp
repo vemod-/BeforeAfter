@@ -9,15 +9,19 @@
 #include <qmath.h>
 
 HighQualityImageItem::HighQualityImageItem(const QImage& image, QGraphicsItem* parent)
-    : QGraphicsItem(parent), image(image), m_transform()
+    : QGraphicsItem(parent), m_Image(image), m_transform()
 {
     setFlag(QGraphicsItem::ItemIgnoresTransformations, false);
+}
+
+HighQualityImageItem::HighQualityImageItem(const QString &path, QGraphicsItem *parent) : QGraphicsItem(parent) {
+    m_Image.load(path);
 }
 
 void HighQualityImageItem::setImage(const QImage& i)
 {
     prepareGeometryChange();
-    image = i;
+    m_Image = i;
     update();
 }
 
@@ -30,7 +34,7 @@ void HighQualityImageItem::setTransformMatrix(const QTransform& transform)
 
 QRectF HighQualityImageItem::boundingRect() const
 {
-    return m_transform.mapRect(QRectF(QPointF(0, 0), image.size()));
+    return m_transform.mapRect(QRectF(QPointF(0,0), m_Image.size()));
 }
 
 void HighQualityImageItem::paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*)
@@ -40,27 +44,28 @@ void HighQualityImageItem::paint(QPainter* painter, const QStyleOptionGraphicsIt
     painter->setRenderHint(QPainter::Antialiasing, true);
     painter->setTransform(m_transform, true);
 
-    QRectF imageRect(0, 0, image.width(), image.height());
+    QRectF imageRect(0, 0, m_Image.width(), m_Image.height());
 
     if (m_viewMode == ViewMode::EditView) {
         painter->setOpacity(m_splitFactor);
-        painter->drawImage(QPointF(0, 0), image);
+        painter->drawImage(QPointF(0,0), m_Image);
     } else if (m_viewMode == ViewMode::SplitView) {
         QRectF splitRect = imageRect;
         splitRect.setRight(splitRect.left() + imageRect.width() * m_splitFactor);
         painter->setClipRect(splitRect);
-        painter->drawImage(QPointF(0, 0), image);
+        painter->drawImage(QPointF(0,0), m_Image);
     } else if (m_viewMode == ViewMode::HSplitView) {
         QRectF splitRect = imageRect;
         splitRect.setBottom(splitRect.top() + imageRect.height() * m_splitFactor);
         painter->setClipRect(splitRect);
-        painter->drawImage(QPointF(0, 0), image);
+        painter->drawImage(QPointF(0,0), m_Image);
     } else {
-        painter->drawImage(QPointF(0, 0), image);
+        painter->drawImage(QPointF(0,0), m_Image);
     }
 
-    painter->setPen(extraPen);
-    painter->drawPath(extra);
+    painter->setPen(m_OverlayPen);
+    painter->setBrush(m_OverlayBrush);
+    painter->drawPath(m_OverlayPath);
     painter->restore();
 }
 
@@ -74,6 +79,17 @@ void HighQualityImageItem::setSplitFactor(qreal factor)
 {
     m_splitFactor = std::clamp(factor, 0.0, 1.0);
     update();
+}
+
+QPointF HighQualityImageItem::mapToOriginal(const QPointF &pt) const
+{
+    bool invertible;
+    QTransform inverse = m_transform.inverted(&invertible);
+    if (invertible) {
+        return inverse.map(pt);
+    } else {
+        return QPointF(-1, -1); // eller std::optional/QVariant/etc
+    }
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -99,27 +115,24 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->VScaleSpinBox,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,&MainWindow::updateFrame);
     connect(ui->TransparancySpinBox,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,&MainWindow::updateFrame);
     connect(ui->MainView,&QGraphicsViewX::fingerMoved,this,&MainWindow::finger);
-    for (int i = 0; i < 4; ++i) {
-        beforeButtons[i] = findChild<QPushButton*>(QString("AnchorBefore%1Button").arg(i + 1));
-        afterButtons[i]  = findChild<QPushButton*>(QString("AnchorAfter%1Button").arg(i + 1));
-
-        if (i < anchorCount) {
-            connect(beforeButtons[i], &QPushButton::clicked, this, [this, i]() {
-                setAnchorBefore(i);
-            });
-            connect(afterButtons[i], &QPushButton::clicked, this, [this, i]() {
-                setAnchorAfter(i);
-            });
-        }
-        else {
-            beforeButtons[i]->setVisible(false);
-            afterButtons[i]->setVisible(false);
+    for (int i = 0; i < maxAnchors; ++i) {
+        QPushButton* b = findChild<QPushButton*>(QString("AnchorBefore%1Button").arg(i + 1));
+        QPushButton* a = findChild<QPushButton*>(QString("AnchorAfter%1Button").arg(i + 1));
+        anchors.before(i).button = b;
+        anchors.after(i).button = a;
+        connect(b, &QPushButton::clicked, this, [this, i]() { setAnchorBefore(i); });
+        connect(a, &QPushButton::clicked, this, [this, i]() { setAnchorAfter(i); });
+        if (i >= anchorCount) {
+            b->setVisible(false);
+            a->setVisible(false);
         }
     }
-    connect(ui->Compute2AnchorsButton,&QPushButton::clicked,this,&MainWindow::computeAnchorsFromTwo);
-    connect(ui->Compute3AnchorsButton,&QPushButton::clicked,this,&MainWindow::computeAnchorsFromThree);
-    connect(ui->Compute4AnchorsButton,&QPushButton::clicked,this,&MainWindow::computeAnchorsFromFour);
-    ui->Compute4AnchorsButton->setVisible(false);
+    for (int i = 0; i < maxAnchors; i++) {
+        QPushButton* b = findChild<QPushButton*>(QString("Compute%1AnchorsButton").arg(i + 1));
+        anchors.computeButtons[i] = b;
+        connect(b, &QPushButton::clicked, this, [this, i]() { computeAnchors(i); });
+        if (i >= anchorCount) b->setVisible(false);
+    }
     connect(ui->ClearButton,&QPushButton::clicked,this,&MainWindow::clearAnchors);
     ui->Compute3AnchorsButton->setEnabled(false);
 }
@@ -190,8 +203,8 @@ void MainWindow::updateValues()
         setValue("YRotate", ui->YRotateSpinBox->value());
 
         for (int i = 0; i < anchorCount; ++i) {
-            setValue(QString("AnchorBefore%1").arg(i + 1), anchorBefore[i]);
-            setValue(QString("AnchorAfter%1").arg(i + 1), anchorAfter[i]);
+            setValue(QString("AnchorBefore%1").arg(i + 1), anchors.before(i));
+            setValue(QString("AnchorAfter%1").arg(i + 1), anchors.after(i));
         }
     }
 }
@@ -200,13 +213,11 @@ void MainWindow::updateFrame()
 {
     updateValues();
     for (QGraphicsItem* i : (const QList<QGraphicsItem*>)Scene.items()) Scene.removeItem(i);
-    ui->MainView->origSize = beforeImage.image.size();
+    ui->MainView->origSize = beforeImage.originalSize();
     QGraphicsScene* s = &Scene;
-    afterImage.extra = afterAnchors();
-    afterImage.extraPen = Qt::green;
+    afterImage.setOverlay(anchors.after().path(),anchors.after().pen());
     drawAfter(s,afterImage);
-    beforeImage.extra = beforeAnchors();
-    beforeImage.extraPen = Qt::yellow;
+    beforeImage.setOverlay(anchors.before().path(),anchors.before().pen());
     drawBefore(s,beforeImage);
     beforeImage.setViewMode((ViewMode)valueInt("ViewMode"));
     beforeImage.setSplitFactor(valueDouble("Transparancy"));
@@ -225,8 +236,8 @@ void MainWindow::drawAfter(QGraphicsScene* s, HighQualityImageItem& i) {
     t.rotate(valueDouble("XRotate"), Qt::XAxis);
     t.rotate(valueDouble("YRotate"), Qt::YAxis);
     t.rotate(valueDouble("Rotate"), Qt::ZAxis);
-    i.setTransform(t);
-    s->setSceneRect(beforeImage.image.rect().united(i.mapRectToScene(i.boundingRect()).toRect()));
+    i.setTransformMatrix(t);
+    s->setSceneRect(beforeImage.originalRect().united(i.mapRectToScene(i.boundingRect()).toRect()));
 }
 
 void MainWindow::loadBefore()
@@ -234,7 +245,7 @@ void MainWindow::loadBefore()
     QString p = QFileDialog::getOpenFileName(this, tr("Open Image"), "", tr("Image Files (*.jpg *.jpeg)"));
     if (!p.isEmpty())
     {
-        beforeImage.image.load(p);
+        beforeImage.load(p);
         setValue("BeforePix",p);
     }
 }
@@ -244,7 +255,7 @@ void MainWindow::loadAfter()
     QString p = QFileDialog::getOpenFileName(this, tr("Open Image"), "", tr("Image Files (*.jpg *.jpeg)"));
     if (!p.isEmpty())
     {
-        afterImage.image.load(p);
+        afterImage.load(p);
         setValue("AfterPix",p);
     }
     updateFrame();
@@ -252,13 +263,13 @@ void MainWindow::loadAfter()
 
 void MainWindow::saveAfter()
 {
-    QImage outImage( beforeImage.image.size(), QImage::Format_RGB32);
+    QImage outImage(beforeImage.originalSize(), QImage::Format_RGB32);
     outImage.fill(Qt::white);
     QPainter painter(&outImage);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    QGraphicsScene s(beforeImage.image.rect());
-    afterImage.extra.clear();
+    QGraphicsScene s(beforeImage.originalRect());
+    afterImage.setOverlay(QPainterPath());
     drawAfter(&s, afterImage);
     s.render(&painter, outImage.rect(), outImage.rect());
     QString path = QFileDialog::getSaveFileName(this, tr("Save Image"), "", tr("Image Files (*.jpg *.jpeg *.png)"));
@@ -287,8 +298,8 @@ void MainWindow::updateLabel()
 void MainWindow::loadProject(QString name)
 {
     if (!name.isEmpty()) m_CurrentIndex = indexFromName(name);
-    beforeImage.image.load(valueString("BeforePix"));
-    afterImage.image.load(valueString("AfterPix"));
+    beforeImage.load(valueString("BeforePix"));
+    afterImage.load(valueString("AfterPix"));
 
     ui->HTranslateSpinBox->setValueSilent(valueDouble("HTranslate"));
     ui->VTranslateSpinBox->setValueSilent(valueDouble("VTranslate"));
@@ -302,15 +313,11 @@ void MainWindow::loadProject(QString name)
     ui->YRotateSpinBox->setValueSilent(valueDouble("YRotate"));
 
     for (int i = 0; i < anchorCount; ++i) {
-        anchorBefore[i] = valuePointF(QString("AnchorBefore%1").arg(i + 1));
-        anchorAfter[i] = valuePointF(QString("AnchorAfter%1").arg(i + 1));
-
-        if (!anchorBefore[i].isNull())
-            ui->MainView->setButtonColor(beforeButtons[i], Qt::yellow);
-        if (!anchorAfter[i].isNull())
-            ui->MainView->setButtonColor(afterButtons[i], Qt::green);
+        anchors.before(i).setPoint(valuePointF(QString("AnchorBefore%1").arg(i + 1)));
+        anchors.after(i).setPoint(valuePointF(QString("AnchorAfter%1").arg(i + 1)));
     }
-    enableComputeButtons();
+    anchors.setButtonColor();
+    anchors.enableComputeButtons();
 
     updateLabel();
     updateFrame();
@@ -358,8 +365,7 @@ void MainWindow::addProject()
         setValue("Transparancy",0.5);
         setValue("HScale",1);
         setValue("VScale",1);
-        //beforePix.load(p);
-        beforeImage.image.load(p);
+        beforeImage.load(p);
         setValue("BeforePix",p);
         loadProject();
         loadAfter();
@@ -371,28 +377,12 @@ void MainWindow::removeCurrentProject()
     removeProject(ui->ProjectCombo->currentText());
 }
 
-bool MainWindow::computeEnabled(int count) {
-    for (int i = 0; i < count; i++) {
-        if (anchorBefore[i] == QPointF(0,0)) return false;
-        if (anchorAfter[i] == QPointF(0,0)) return false;
-    }
-    return true;
-}
-
-void MainWindow::enableComputeButtons() {
-    ui->Compute2AnchorsButton->setEnabled(computeEnabled(2));
-    ui->Compute3AnchorsButton->setEnabled(computeEnabled(3));
-}
-
 void MainWindow::computeMax() {
-    //if (computeEnabled(4)) {
-    //    computeAnchorsFromFour();
-    //}
-    if (computeEnabled(3)) {
-        computeAnchorsFromThree();
-    }
-    else if (computeEnabled(2)) {
-        computeAnchorsFromTwo();
+    for (int i = maxAnchors; i > 0; --i) {
+        if (anchors.computeEnabled(i)) {
+            computeAnchors(i - 1);
+            break;
+        }
     }
 }
 
@@ -470,29 +460,18 @@ void MainWindow::finger(QPointF p) {
 }
 
 void MainWindow::setAnchorBefore(int index) {
-    for (QGraphicsItem* i : (const QList<QGraphicsItem*>)Scene.items()) Scene.removeItem(i);
-    ui->MainView->origSize = beforeImage.image.size();
-    QGraphicsScene* s = &Scene;
-    beforeImage.extra = beforeAnchors();
-    beforeImage.extraPen = Qt::yellow;
-    beforeImage.setSplitFactor(1);
-    s->addItem(&beforeImage);
-    ui->MainView->loopForPoint(beforeButtons[index], anchorBefore[index], Qt::yellow);
-    enableComputeButtons();
+    Anchor& a = anchors.before(index);
+    ui->MainView->loopForPoint(a);
+    anchors.enableComputeButtons();
     computeMax();
     updateFrame();
 }
 
 void MainWindow::setAnchorAfter(int index) {
-    for (QGraphicsItem* i : (const QList<QGraphicsItem*>)Scene.items()) Scene.removeItem(i);
-    ui->MainView->origSize = beforeImage.image.size();
-    QGraphicsScene* s = &Scene;
-    afterImage.extra = afterAnchors();
-    afterImage.extraPen = Qt::green;
-    afterImage.setTransform(QTransform());
-    s->addItem(&afterImage);
-    ui->MainView->loopForPoint(afterButtons[index], anchorAfter[index], Qt::green);
-    enableComputeButtons();
+    Anchor& a = anchors.after(index);
+    ui->MainView->loopForPoint(a);
+    if (a.isSet()) a.setPoint(afterImage.mapToOriginal(a));
+    anchors.enableComputeButtons();
     computeMax();
     updateFrame();
 }
@@ -511,12 +490,7 @@ void MainWindow::clearValues() {
 }
 */
 void MainWindow::clearAnchors() {
-    for (int i = 0; i < anchorCount; i++) {
-        anchorBefore[i] = QPointF(0,0);
-        anchorAfter[i] = QPointF(0,0);
-        ui->MainView->setButtonColor(beforeButtons[i],Qt::transparent);
-        ui->MainView->setButtonColor(afterButtons[i],Qt::transparent);
-    }
+    anchors.clear();
     ui->HTranslateSpinBox->setValueSilent(0);
     ui->VTranslateSpinBox->setValueSilent(0);
     ui->HShearSpinBox->setValueSilent(0);
@@ -529,22 +503,24 @@ void MainWindow::clearAnchors() {
     updateFrame();
 }
 
-void MainWindow::computeAnchorsFromTwo() {
-    QTransform t = computeAlignTransform(anchorAfter, anchorBefore);
+void MainWindow::computeAnchors(int index) {
+    QTransform t;
+    switch (index) {
+    case 0:
+        t = computePointTransform(anchors.after(), anchors.before());
+        break;
+    case 1:
+        t = computeAlignTransform(anchors.after(), anchors.before());
+        break;
+    case 2:
+        t = computeAffineFromThreePoints(anchors.after(), anchors.before());
+        break;
+    case 3:
+        t = computeAffineFromFourPoints(anchors.after(), anchors.before());
+        break;
+    }
     saveTransform(t);
     updateFrame();
 }
 
-void MainWindow::computeAnchorsFromThree()
-{
-    QTransform t = computeAffineFromThreePoints(anchorAfter, anchorBefore);
-    saveTransform(t);
-    updateFrame();
-}
-
-void MainWindow::computeAnchorsFromFour() {
-    QTransform t = computeAffineFromFourPoints(anchorAfter, anchorBefore);
-    saveTransform(t);
-    updateFrame();
-}
 

@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>800</width>
-    <height>860</height>
+    <height>884</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -612,13 +612,38 @@
               </property>
               <item>
                <widget class="QPushButton" name="ClearButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>30</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
                 <property name="text">
                  <string>Clr</string>
                 </property>
                </widget>
               </item>
               <item>
+               <widget class="QPushButton" name="Compute1AnchorsButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>30</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>1pt</string>
+                </property>
+               </widget>
+              </item>
+              <item>
                <widget class="QPushButton" name="Compute2AnchorsButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>30</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
                 <property name="text">
                  <string>2pt</string>
                 </property>
@@ -626,6 +651,12 @@
               </item>
               <item>
                <widget class="QPushButton" name="Compute3AnchorsButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>30</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
                 <property name="text">
                  <string>3pt</string>
                 </property>
@@ -633,6 +664,12 @@
               </item>
               <item>
                <widget class="QPushButton" name="Compute4AnchorsButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>30</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
                 <property name="text">
                  <string>4pt</string>
                 </property>

@@ -18,6 +18,7 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
+#define maxAnchors 4
 #define anchorCount 3
 
 enum ViewMode {
@@ -30,8 +31,10 @@ class HighQualityImageItem : public QGraphicsItem
 {
 public:
     HighQualityImageItem(const QImage& image = QImage(), QGraphicsItem* parent = nullptr);
+    HighQualityImageItem(const QString& path, QGraphicsItem* parent = nullptr);
 
     void setImage(const QImage& image);
+    void load(const QString& path) { m_Image.load(path); }
     void setTransformMatrix(const QTransform& transform);
 
     QRectF boundingRect() const override;
@@ -39,10 +42,19 @@ public:
 
     void setViewMode(ViewMode mode);
     void setSplitFactor(qreal factor);
-    QImage image;
-    QPainterPath extra;
-    QPen extraPen;
+    QSize originalSize() { return m_Image.size(); }
+    QRect originalRect() { return m_Image.rect(); }
+    QPointF mapToOriginal(const QPointF& pt) const;
+    void setOverlay(const QPainterPath& path, const QPen& pen = QPen(), const QBrush& brush = QBrush()) {
+        m_OverlayPath = path;
+        m_OverlayPen = pen;
+        m_OverlayBrush = brush;
+    }
 private:
+    QPainterPath m_OverlayPath;
+    QPen m_OverlayPen;
+    QBrush m_OverlayBrush;
+    QImage m_Image;
     QTransform m_transform;
     ViewMode m_viewMode = ViewMode::SplitView;
     qreal m_splitFactor = 1.0;
@@ -60,6 +72,105 @@ public:
     }
 };
 
+class Anchor : public QPointF {
+public:
+    Anchor(QColor c = Qt::transparent) {
+        defaultColor = c;
+    }
+    void setPoint(const QPointF& p) {
+        setX(p.x());
+        setY(p.y());
+    }
+    void clear() {
+        setX(0);
+        setY(0);
+        setButtonColor(Qt::transparent);
+    }
+    void setButtonColor() {
+        if (!isSet()) {
+            setButtonColor(Qt::transparent);
+        }
+        else {
+            setButtonColor(defaultColor);
+        }
+    }
+    void setLoopColor() {
+        setButtonColor(Qt::red);
+    }
+    QPainterPath pointPath(int i) {
+        QPainterPath g;
+        g.addEllipse(x(),y(),1,1);
+        g.addEllipse(x()-2,y()-2,5,5);
+        g.addText(x() + 8, y() - 8,QFont("Helvetica",8),QString::number(i));
+        return g;
+    }
+    bool isSet() {
+        return !(x() == 0 && y() == 0);
+    }
+    QPushButton* button = nullptr;
+private:
+    void setButtonColor(QColor c) {
+        button->setAutoFillBackground(true);
+        QPalette palette = button->palette();
+        palette.setColor(QPalette::Button, c);
+        button->setPalette(palette);
+    }
+    QColor defaultColor = Qt::transparent;
+};
+
+class AnchorGroup : public std::array<Anchor,maxAnchors> {
+public:
+    AnchorGroup(QColor c = Qt::transparent) {
+        defaultColor = c;
+        for (int i = 0; i < maxAnchors; i++) at(i) = Anchor(c);
+    }
+    QPainterPath path() {
+        QPainterPath g;
+        for (int i = 0; i < maxAnchors; i++) g.addPath(at(i).pointPath(i + 1));
+        return g;
+    }
+    QPen pen() {
+        return QPen(defaultColor);
+    }
+    void clear() {
+        for (int i = 0; i < maxAnchors; i++) at(i).clear();
+    }
+    void setButtonColor() {
+        for (int i = 0; i < maxAnchors; i++) at(i).setButtonColor();
+    }
+private:
+    QColor defaultColor;
+};
+
+class Anchors : public std::array<AnchorGroup,2> {
+public:
+    Anchors() {
+        at(0) = AnchorGroup(Qt::yellow);
+        at(1) = AnchorGroup(Qt::green);
+    }
+    void clear() {
+        for (int i = 0; i < 2; i++) at(i).clear();
+    }
+    void setButtonColor() {
+        for (int i = 0; i < 2; i++) at(i).setButtonColor();
+    }
+    AnchorGroup& before() { return at(0); }
+    AnchorGroup& after() { return at(1); }
+    Anchor& before(int index) { return at(0)[index]; }
+    Anchor& after(int index) { return at(1)[index]; }
+    bool computeEnabled(int count) {
+        for (int i = 0; i < count; i++) {
+            if (!before(i).isSet()) return false;
+            if (!after(i).isSet()) return false;
+        }
+        return true;
+    }
+    void enableComputeButtons() {
+        for (int i = 0; i < maxAnchors; i++) computeButtons[i]->setEnabled(computeEnabled(i + 1));
+    }
+    std::array<QPushButton*,maxAnchors> computeButtons;
+};
+
 class QGraphicsViewX: public QGraphicsView
 {
     Q_OBJECT
@@ -72,29 +183,20 @@ public:
         setDragMode(ScrollHandDrag);
         grabGesture(Qt::PinchGesture);
     }
-    void loopForPoint(QPushButton* b, QPointF& p, QColor c) {
-        loopPoint = p;
+    void loopForPoint(Anchor& a) {
+        loopPoint = a;
+        if (looping) {
+            breakLoop(a);
+            return;
+        }
         looping = true;
-        setButtonColor(b, Qt::red);
+        a.setLoopColor();
         QApplication::setOverrideCursor(Qt::PointingHandCursor);
         while (looping) {
             usleep(100);
             QApplication::processEvents();
         }
-        QApplication::restoreOverrideCursor();
-        if (loopPoint != QPointF(0,0)) {
-            setButtonColor(b, c);
-            p = loopPoint;
-        }
-        else {
-            setButtonColor(b,Qt::transparent);
-        }
-    }
-    void setButtonColor(QPushButton* b, QColor c) {
-        b->setAutoFillBackground(true);
-        QPalette palette = b->palette();
-        palette.setColor(QPalette::Button, c);
-        b->setPalette(palette);
+        breakLoop(a);
     }
     QSizeF origSize;
 signals:
@@ -102,14 +204,13 @@ signals:
 protected:
     virtual bool event(QEvent *event)
     {
-        if (event->type() == QEvent::Gesture)
-            return gestureEvent(static_cast<QGestureEvent*>(event));
+        if (event->type() == QEvent::Gesture) return gestureEvent(static_cast<QGestureEvent*>(event));
         return QGraphicsView::event(event);
     }
     void keyPressEvent(QKeyEvent* /*event*/) {
         looping = false;
     }
-    void closeEvent(QCloseEvent* /*event*/) {
+    void hideEvent(QHideEvent* /*event*/) {
         looping = false;
     }
     void mousePressEvent(QMouseEvent* event) {
@@ -136,6 +237,12 @@ private:
     bool m_MouseDown = false;
     bool looping = false;
     QPointF loopPoint;
+    void breakLoop(Anchor& a) {
+        looping = false;
+        QApplication::restoreOverrideCursor();
+        if (loopPoint != QPointF(0,0)) a.setPoint(loopPoint);
+        a.setButtonColor();
+    }
     bool gestureEvent(QGestureEvent *event)
     {
         if (QGesture *pinch = event->gesture(Qt::PinchGesture))
@@ -163,32 +270,32 @@ private:
             setTransform(t);
 
             // Justera scroll så gesture center stannar visuellt kvar
-            QPointF newGestureCenterInView = mapFromScene(gestureCenterInScene);
-            QPointF delta = gestureCenterInView - newGestureCenterInView;
-            horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
-            verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
-
+            setScrollBars(gestureCenterInScene,gestureCenterInView);
             return; // Vi är klara här
         }
+        else if (event->state() == Qt::GestureUpdated) {
+            // 4. Pågående gest: räkna ut temporär skala
+            qreal sxy = scaleFactor * currentStepScaleFactor;
+            sxy = std::clamp(sxy, 0.2, 5.0);
 
-        // 4. Pågående gest: räkna ut temporär skala
-        qreal sxy = scaleFactor * currentStepScaleFactor;
-        sxy = std::clamp(sxy, 0.2, 5.0);
+            // Om vi nått gräns – lås skalan och återställ steg
+            if (sxy == 0.2 || sxy == 5.0) {
+                scaleFactor = sxy;
+                currentStepScaleFactor = 1.0;
+            }
 
-        // Om vi nått gräns – lås skalan och återställ steg
-        if (sxy == 0.2 || sxy == 5.0) {
-            scaleFactor = sxy;
-            currentStepScaleFactor = 1.0;
+            // 5. Sätt transform för pågående skalning
+            QTransform t;
+            t.scale(sxy, sxy);
+            setTransform(t);
+
+            // 6. Justera scroll så pinch center stannar kvar
+            setScrollBars(gestureCenterInScene,gestureCenterInView);
         }
-
-        // 5. Sätt transform för pågående skalning
-        QTransform t;
-        t.scale(sxy, sxy);
-        setTransform(t);
-
-        // 6. Justera scroll så pinch center stannar kvar
-        QPointF newGestureCenterInView = mapFromScene(gestureCenterInScene);
-        QPointF delta = gestureCenterInView - newGestureCenterInView;
+    }
+    void setScrollBars(QPointF gestureCenterInScene, QPointF gestureCenterInView) {
+        const QPointF newGestureCenterInView = mapFromScene(gestureCenterInScene);
+        const QPointF delta = gestureCenterInView - newGestureCenterInView;
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
         verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
     }
@@ -213,10 +320,7 @@ private:
     void drawAfter(QGraphicsScene*, HighQualityImageItem&);
     HighQualityImageItem beforeImage;
     HighQualityImageItem afterImage;
-    std::array<QPointF,4> anchorBefore;
-    std::array<QPointF,4> anchorAfter;
-    std::array<QPushButton*,4> beforeButtons;
-    std::array<QPushButton*,4> afterButtons;
+    Anchors anchors;
     void updateValues();
     void updateProjects();
     void addProject();
@@ -249,27 +353,14 @@ private:
         for (int i = 0; i < m_ProjectList.size(); i++) if (m_ProjectList[i].value(key)==value) return true;
         return false;
     }
-    bool computeEnabled(int count);
-    void enableComputeButtons();
     void computeMax();
-    QPainterPath anchorPoint(QPointF p, int i) {
-        QPainterPath g;
-        g.addEllipse(p.x(),p.y(),1,1);
-        g.addEllipse(p.x()-2,p.y()-2,5,5);
-        g.addText(p + QPointF(8,-8),QFont("Helvetica",8),QString::number(i));
-        return g;
+    QTransform computePointTransform(std::array<Anchor,maxAnchors> after,std::array<Anchor,maxAnchors> before) {
+        QTransform t;
+        t.translate(before[0].x(), before[0].y());
+        t.translate(-after[0].x(), -after[0].y());
+        return t;
     }
-    QPainterPath beforeAnchors() {
-        QPainterPath g;
-        for (int i = 0; i < 4; i++) g.addPath(anchorPoint(anchorBefore[i],i + 1));
-        return g;
-    }
-    QPainterPath afterAnchors() {
-        QPainterPath g;
-        for (int i = 0; i < 4; i++) g.addPath(anchorPoint(anchorAfter[i],i + 1));
-        return g;
-    }
-    QTransform computeAlignTransform(std::array<QPointF,4> after,std::array<QPointF,4> before)
+    QTransform computeAlignTransform(std::array<Anchor,maxAnchors> after,std::array<Anchor,maxAnchors> before)
     {
         // Steg 1: Vektorer
         QPointF vAfter = after[1] - after[0];
@@ -294,7 +385,7 @@ private:
         for (int i = 0; i < 2; i++) qDebug() << "Mapped after " << i + 1 << t.map(after[i]) << "Expected:" << before[i];
         return t;
     }
-    QTransform computeAffineFromThreePoints(std::array<QPointF,4> after,std::array<QPointF,4> before)
+    QTransform computeAffineFromThreePoints(std::array<Anchor,maxAnchors> after,std::array<Anchor,maxAnchors> before)
     {
         /*
         QPolygonF srcPoly = {a1, a2, a3};
@@ -347,7 +438,7 @@ private:
         for (int i = 0; i < 3; i++) qDebug() << "Mapped after " << i + 1 << t.map(after[i]) << "Expected:" << before[i];
         return t;
     }
-    QTransform computeAffineFromFourPoints(std::array<QPointF,4> after,std::array<QPointF,4> before)
+    QTransform computeAffineFromFourPoints(std::array<Anchor,maxAnchors> after,std::array<Anchor,maxAnchors> before)
     {
         QList<QPointF> a;
         QList<QPointF> b;
@@ -361,7 +452,6 @@ private:
         QTransform::quadToQuad(srcPoly, dstPoly, q);
         return q;
     }
-
     void saveTransform(QTransform& t);
 private slots:
     void loadBefore();
@@ -372,11 +462,8 @@ private slots:
     void finger(QPointF);
     void setAnchorBefore(int index);
     void setAnchorAfter(int index);
-    //void clearValues();
     void clearAnchors();
-    void computeAnchorsFromTwo();
-    void computeAnchorsFromThree();
-    void computeAnchorsFromFour();
+    void computeAnchors(int index);
 public slots:
     void updateFrame();
     void showEvent(QShowEvent*);
