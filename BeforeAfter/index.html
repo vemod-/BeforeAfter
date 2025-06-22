@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Toröd förr och nu</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #111; color: white; }
+    .pair-container { margin: 2em auto; width: 90vw; max-width: 1200px; }
+    .label { margin-bottom: 0.5em; font-size: 1.2em; }
+
+    .img-container {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      background: #222;
+    }
+    .img-container::before {
+      content: "";
+      display: block;
+      padding-top: 56.25%; /* 16:9 ratio fallback */
+    }
+    .img-before, .img-after {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%; object-fit: contain;
+    }
+    .img-before {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      z-index: 2;
+      transition: clip-path 0.2s, opacity 0.2s;
+    }
+    .img-after {
+      z-index: 1;
+    }
+    select {
+      /* ... */
+      background-color: #000;
+      color: #fff;
+    }
+
+    select::before {
+      /* ... */
+      border-bottom: var(--size) solid #fff;
+    }
+
+    select::after {
+      /* ... */
+      border-top: var(--size) solid #fff;
+    }
+
+    input[type=range] {
+      width: 100%;
+      margin-top: 0.5em;
+    }
+  </style>
+</head>
+<body>
+<h1 style="text-align: center;">Toröd förr och nu</h1>
+<div id="gallery">
+
+  <div class="pair-container">
+    <div class="label">Albert</div>
+    <div class="img-container">
+      <img src="Albert/before.jpg" class="img-before" id="before-0">
+      <img src="Albert/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-0">
+    <select id="mode-0">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">Ingelas</div>
+    <div class="img-container">
+      <img src="Ingelas/before.jpg" class="img-before" id="before-1">
+      <img src="Ingelas/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-1">
+    <select id="mode-1">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">Klätterklipporna</div>
+    <div class="img-container">
+      <img src="Klätterklipporna/before.jpg" class="img-before" id="before-2">
+      <img src="Klätterklipporna/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-2">
+    <select id="mode-2">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">Ladan</div>
+    <div class="img-container">
+      <img src="Ladan/before.jpg" class="img-before" id="before-3">
+      <img src="Ladan/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-3">
+    <select id="mode-3">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">Mittfjäll</div>
+    <div class="img-container">
+      <img src="Mittfjäll/before.jpg" class="img-before" id="before-4">
+      <img src="Mittfjäll/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-4">
+    <select id="mode-4">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">SkottaBeata</div>
+    <div class="img-container">
+      <img src="SkottaBeata/before.jpg" class="img-before" id="before-5">
+      <img src="SkottaBeata/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-5">
+    <select id="mode-5">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">Strandstugor</div>
+    <div class="img-container">
+      <img src="Strandstugor/before.jpg" class="img-before" id="before-6">
+      <img src="Strandstugor/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-6">
+    <select id="mode-6">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">Trekanten</div>
+    <div class="img-container">
+      <img src="Trekanten/before.jpg" class="img-before" id="before-7">
+      <img src="Trekanten/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-7">
+    <select id="mode-7">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+
+  <div class="pair-container">
+    <div class="label">Youngs</div>
+    <div class="img-container">
+      <img src="Youngs/before.jpg" class="img-before" id="before-8">
+      <img src="Youngs/after.jpg" class="img-after">
+    </div>
+    <input type="range" min="0" max="100" value="50" id="slider-8">
+    <select id="mode-8">
+      <option value="vertical">Vertical Split</option>
+      <option value="horizontal">Horizontal Split</option>
+      <option value="diagonal">Diagonal Split</option>
+      <option value="transparent">Transparency</option>
+    </select>
+  </div>
+</div>
+<script>
+const count = 9;
+
+for (let i = 0; i < count; i++) {
+  const slider = document.getElementById(`slider-${i}`);
+  const before = document.getElementById(`before-${i}`);
+  const after = document.getElementById(`after-${i}`);
+  const mode = document.getElementById(`mode-${i}`);
+
+  function updateView() {
+    const val = slider.value;
+    const m = mode.value;
+
+    // Reset style
+    before.style.mixBlendMode = '';
+    before.style.opacity = '';
+    before.style.clipPath = '';
+    before.style.transform = '';
+
+    if (m === 'vertical') {
+      before.style.clipPath = `inset(0 ${100 - val}% 0 0)`;
+    } else if (m === 'horizontal') {
+      before.style.clipPath = `inset(0 0 ${100 - val}% 0)`;
+    } else if (m === 'diagonal') {
+      const pct = val / 50;
+      const x = pct * 100;
+      const y = pct * 100;
+      //before.style.clipPath = `polygon(0 0, ${x}% 0, 100% ${y}%, 100% 100%, 0 100%)`;
+      before.style.clipPath = `polygon(0 100%, 0 ${y}%, ${x}% 0, 100% 0, 100% 100%)`;
+    } else if (m === 'transparent') {
+      before.style.mixBlendMode = 'normal'; // or 'multiply', 'overlay', etc.
+      before.style.opacity = (val / 100).toString();
+    }
+  }
+
+  slider.addEventListener('input', updateView);
+  mode.addEventListener('change', updateView);
+
+  updateView(); // Init
+}
+</script>
+</body>
+</html>

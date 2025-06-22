@@ -709,9 +709,10 @@ for (let i = 0; i < count; i++) {
       before.style.clipPath = `inset(0 0 ${100 - val}% 0)`;
     } else if (m === 'diagonal') {
       const pct = val / 50;
-      const x = 100 - pct * 100;
+      const x = pct * 100;
       const y = pct * 100;
-      before.style.clipPath = `polygon(0 0, ${x}% 0, 100% ${y}%, 100% 100%, 0 100%)`;
+      //before.style.clipPath = `polygon(0 0, ${x}% 0, 100% ${y}%, 100% 100%, 0 100%)`;
+      before.style.clipPath = `polygon(0 100%, 0 ${y}%, ${x}% 0, 100% 0, 100% 100%)`;
     } else if (m === 'transparent') {
       before.style.mixBlendMode = 'normal'; // or 'multiply', 'overlay', etc.
       before.style.opacity = (val / 100).toString();
